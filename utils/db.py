@@ -46,16 +46,13 @@ async def ensure_guild(guild_id: int):
 
 
 async def _seed_planets(conn, guild_id: int):
-    """Insert the 5 default planets if this guild has none yet."""
-    count = await conn.fetchval(
-        "SELECT COUNT(*) FROM planets WHERE guild_id=$1", guild_id)
+    count = await conn.fetchval("SELECT COUNT(*) FROM planets WHERE guild_id=$1", guild_id)
     if count:
         return
     for p in DEFAULT_PLANETS:
         await conn.execute("""
             INSERT INTO planets (guild_id, name, contractor, enemy_type, sort_order)
-            VALUES ($1,$2,$3,$4,$5)
-            ON CONFLICT (guild_id, name) DO NOTHING
+            VALUES ($1,$2,$3,$4,$5) ON CONFLICT (guild_id, name) DO NOTHING
         """, guild_id, p["name"], p["contractor"], p["enemy_type"], p["sort_order"])
 
 
@@ -78,10 +75,10 @@ async def get_theme(conn, guild_id: int) -> dict:
 async def get_active_planet_id(conn, guild_id: int) -> int:
     row = await conn.fetchrow(
         "SELECT active_planet_id FROM guild_config WHERE guild_id=$1", guild_id)
-    return (row["active_planet_id"] if row and row["active_planet_id"] else 1)
+    return row["active_planet_id"] if row and row["active_planet_id"] else 1
 
 
-async def get_planet(conn, guild_id: int, planet_id: int) -> Optional[asyncpg.Record]:
+async def get_planet(conn, guild_id: int, planet_id: int):
     return await conn.fetchrow(
         "SELECT * FROM planets WHERE guild_id=$1 AND id=$2", guild_id, planet_id)
 
@@ -93,7 +90,7 @@ def _default_theme() -> dict:
         "enemy_faction":  "Enemy",
         "player_unit":    "Unit",
         "enemy_unit":     "Enemy Unit",
-        "safe_zone":      "FOB Alpha",
+        "safe_zone":      "Deployment Zone",
         "flavor_text":    "The contract must be fulfilled.",
         "color":          0xAA2222,
     }
