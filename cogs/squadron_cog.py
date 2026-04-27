@@ -9,6 +9,7 @@ Players interact via:
 
 import random
 import discord
+from discord import app_commands
 from discord.ext import commands
 
 from utils.db import get_pool, ensure_guild, get_theme, get_active_planet_id
@@ -718,6 +719,20 @@ class SquadronCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
+    @app_commands.command(name="enlist", description="Enlist a new unit and choose your brigade.")
+    @app_commands.describe(unit_name="Name for your unit (e.g. Iron Wolves)")
+    async def enlist(self, interaction: discord.Interaction, unit_name: str):
+        from utils.db import ensure_guild
+        await ensure_guild(interaction.guild_id)
+        embed = brigade_picker_embed(unit_name)
+        await interaction.response.send_message(
+            embed=embed,
+            view=BrigadePickerView(interaction.guild_id, unit_name),
+            ephemeral=True,
+        )
+
 
 async def setup(bot):
     await bot.add_cog(SquadronCog(bot))
+    from views.menu import EnlistView
+    bot.add_view(EnlistView(guild_id=0))
