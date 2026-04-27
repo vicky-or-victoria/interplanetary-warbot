@@ -1,12 +1,12 @@
 -- ══════════════════════════════════════════════════════════════════════════════
--- WARBOT  —  Full Schema
--- Two-level hex addressing: outer "q,r" + mid "q,r:mq,mr"
--- Multi-planet support with 5 defaults per guild
+-- WARBOT  —  Schema v3
+-- Flat global hex addressing: every hex is "gq,gr"
+-- No outer/mid/level split. 703 hexes per planet.
+-- Brigade system with full mechanical differences.
 -- ══════════════════════════════════════════════════════════════════════════════
 
--- ── Guild configuration ────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS guild_config (
-    guild_id              BIGINT PRIMARY KEY,
+    guild_id              BIGINT       PRIMARY KEY,
     game_started          BOOLEAN      NOT NULL DEFAULT FALSE,
     active_planet_id      INT          DEFAULT 1,
     turn_interval_hours   INT          NOT NULL DEFAULT 8,
@@ -18,72 +18,65 @@ CREATE TABLE IF NOT EXISTS guild_config (
     overview_message_id   BIGINT       DEFAULT NULL,
     reg_channel_id        BIGINT       DEFAULT NULL,
     reg_message_id        BIGINT       DEFAULT NULL,
+    enlist_channel_id     BIGINT       DEFAULT NULL,
+    enlist_message_id     BIGINT       DEFAULT NULL,
     admin_role_id         BIGINT       DEFAULT NULL,
     player_role_id        BIGINT       DEFAULT NULL,
     gamemaster_role_id    BIGINT       DEFAULT NULL,
-
-    -- Theme strings
     theme_bot_name        TEXT NOT NULL DEFAULT 'IRON PACT',
     theme_player_faction  TEXT NOT NULL DEFAULT 'Iron Pact PMC',
     theme_enemy_faction   TEXT NOT NULL DEFAULT 'Enemy',
     theme_player_unit     TEXT NOT NULL DEFAULT 'Unit',
     theme_enemy_unit      TEXT NOT NULL DEFAULT 'Enemy Unit',
-    theme_safe_zone       TEXT NOT NULL DEFAULT 'FOB Alpha',
+    theme_safe_zone       TEXT NOT NULL DEFAULT 'Deployment Zone',
     theme_flavor_text     TEXT NOT NULL DEFAULT 'The contract must be fulfilled.',
-    theme_color           INT  NOT NULL DEFAULT 11141120,
-
-    citadel_besieged      BOOLEAN NOT NULL DEFAULT FALSE
+    theme_color           INT  NOT NULL DEFAULT 11141120
 );
 
--- ── Planets ────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS planets (
-    id            SERIAL       PRIMARY KEY,
-    guild_id      BIGINT       NOT NULL,
-    name          TEXT         NOT NULL,
-    contractor    TEXT         NOT NULL DEFAULT 'Uncontracted',
-    enemy_type    TEXT         NOT NULL DEFAULT 'Unknown',
-    description   TEXT         DEFAULT NULL,
-    is_unlocked   BOOLEAN      NOT NULL DEFAULT TRUE,
-    sort_order    INT          NOT NULL DEFAULT 0,
+    id          SERIAL   PRIMARY KEY,
+    guild_id    BIGINT   NOT NULL,
+    name        TEXT     NOT NULL,
+    contractor  TEXT     NOT NULL DEFAULT 'Uncontracted',
+    enemy_type  TEXT     NOT NULL DEFAULT 'Unknown',
+    description TEXT     DEFAULT NULL,
+    is_unlocked BOOLEAN  NOT NULL DEFAULT TRUE,
+    sort_order  INT      NOT NULL DEFAULT 0,
     UNIQUE(guild_id, name)
 );
 
--- ── Hex map  (outer level=1, mid level=2) ─────────────────────────────────────
+-- Flat hex map — address is global axial "gq,gr"
 CREATE TABLE IF NOT EXISTS hexes (
-    id             SERIAL      PRIMARY KEY,
-    guild_id       BIGINT      NOT NULL,
-    planet_id      INT         NOT NULL,
-    address        TEXT        NOT NULL,
-    level          INT         NOT NULL,
-    parent_address TEXT        DEFAULT NULL,
-    controller     TEXT        NOT NULL DEFAULT 'neutral',
-    status         TEXT        NOT NULL DEFAULT 'neutral',
+    id         SERIAL  PRIMARY KEY,
+    guild_id   BIGINT  NOT NULL,
+    planet_id  INT     NOT NULL,
+    address    TEXT    NOT NULL,
+    controller TEXT    NOT NULL DEFAULT 'neutral',
+    status     TEXT    NOT NULL DEFAULT 'neutral',
     UNIQUE(guild_id, planet_id, address)
 );
 
--- ── Per-hex terrain  (separate table so terrain survives game resets) ─────────
 CREATE TABLE IF NOT EXISTS hex_terrain (
-    id         SERIAL PRIMARY KEY,
-    guild_id   BIGINT NOT NULL,
-    planet_id  INT    NOT NULL,
-    address    TEXT   NOT NULL,
-    terrain    TEXT   NOT NULL DEFAULT 'flat',
+    id        SERIAL PRIMARY KEY,
+    guild_id  BIGINT NOT NULL,
+    planet_id INT    NOT NULL,
+    address   TEXT   NOT NULL,
+    terrain   TEXT   NOT NULL DEFAULT 'flat',
     UNIQUE(guild_id, planet_id, address)
 );
 
--- ── Player units (squadrons) ──────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS squadrons (
     id                  SERIAL      PRIMARY KEY,
     guild_id            BIGINT      NOT NULL,
     planet_id           INT         NOT NULL DEFAULT 1,
     owner_id            BIGINT      NOT NULL,
-    owner_name          TEXT        NOT NULL DEFAULT 'Handler',
+    owner_name          TEXT        NOT NULL DEFAULT 'Operative',
     name                TEXT        NOT NULL,
+    brigade             TEXT        NOT NULL DEFAULT 'infantry',
     hex_address         TEXT        NOT NULL,
-    deploy_hex          TEXT        DEFAULT NULL,
     in_transit          BOOLEAN     NOT NULL DEFAULT FALSE,
     transit_destination TEXT        DEFAULT NULL,
-    transit_step        INT         NOT NULL DEFAULT 0,
+    transit_turns_left  INT         NOT NULL DEFAULT 0,
     attack              INT         NOT NULL DEFAULT 10,
     defense             INT         NOT NULL DEFAULT 10,
     speed               INT         NOT NULL DEFAULT 10,
@@ -92,11 +85,12 @@ CREATE TABLE IF NOT EXISTS squadrons (
     recon               INT         NOT NULL DEFAULT 10,
     is_active           BOOLEAN     NOT NULL DEFAULT TRUE,
     last_scavenged_turn INT         NOT NULL DEFAULT -1,
-    last_combat_turn    INT         NOT NULL DEFAULT -1,
+    last_moved_turn     INT         NOT NULL DEFAULT -1,
+    is_dug_in           BOOLEAN     NOT NULL DEFAULT FALSE,
+    artillery_armed     BOOLEAN     NOT NULL DEFAULT FALSE,
     UNIQUE(guild_id, planet_id, owner_id, name)
 );
 
--- ── Enemy units ───────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS enemy_units (
     id             SERIAL  PRIMARY KEY,
     guild_id       BIGINT  NOT NULL,
@@ -113,7 +107,6 @@ CREATE TABLE IF NOT EXISTS enemy_units (
     manually_moved BOOLEAN NOT NULL DEFAULT FALSE
 );
 
--- ── GM queued enemy moves ─────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS enemy_gm_moves (
     id             SERIAL      PRIMARY KEY,
     guild_id       BIGINT      NOT NULL,
@@ -124,7 +117,6 @@ CREATE TABLE IF NOT EXISTS enemy_gm_moves (
     UNIQUE(guild_id, enemy_unit_id)
 );
 
--- ── Combat log ────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS combat_log (
     id             SERIAL      PRIMARY KEY,
     guild_id       BIGINT      NOT NULL,
@@ -139,7 +131,6 @@ CREATE TABLE IF NOT EXISTS combat_log (
     occurred_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- ── Turn history ──────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS turn_history (
     id          SERIAL      PRIMARY KEY,
     guild_id    BIGINT      NOT NULL,
@@ -148,38 +139,35 @@ CREATE TABLE IF NOT EXISTS turn_history (
     resolved_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- ── Player economy ────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS player_economy (
-    id             SERIAL PRIMARY KEY,
-    guild_id       BIGINT NOT NULL,
-    owner_id       BIGINT NOT NULL,
-    raw_materials  INT    NOT NULL DEFAULT 0,
-    credits        INT    NOT NULL DEFAULT 0,
+    id            SERIAL PRIMARY KEY,
+    guild_id      BIGINT NOT NULL,
+    owner_id      BIGINT NOT NULL,
+    raw_materials INT    NOT NULL DEFAULT 0,
+    credits       INT    NOT NULL DEFAULT 0,
     UNIQUE(guild_id, owner_id)
 );
 
--- ── Indexes ───────────────────────────────────────────────────────────────────
-CREATE INDEX IF NOT EXISTS idx_hexes_guild_planet   ON hexes(guild_id, planet_id);
-CREATE INDEX IF NOT EXISTS idx_sq_guild_planet      ON squadrons(guild_id, planet_id);
-CREATE INDEX IF NOT EXISTS idx_enemy_guild_planet   ON enemy_units(guild_id, planet_id);
-CREATE INDEX IF NOT EXISTS idx_combat_guild         ON combat_log(guild_id);
-CREATE INDEX IF NOT EXISTS idx_planets_guild        ON planets(guild_id);
+CREATE INDEX IF NOT EXISTS idx_hexes_gp    ON hexes(guild_id, planet_id);
+CREATE INDEX IF NOT EXISTS idx_sq_gp       ON squadrons(guild_id, planet_id);
+CREATE INDEX IF NOT EXISTS idx_enemy_gp    ON enemy_units(guild_id, planet_id);
+CREATE INDEX IF NOT EXISTS idx_combat_g    ON combat_log(guild_id);
+CREATE INDEX IF NOT EXISTS idx_planets_g   ON planets(guild_id);
+CREATE INDEX IF NOT EXISTS idx_terrain_gp  ON hex_terrain(guild_id, planet_id);
 
--- ── Live migration guards ─────────────────────────────────────────────────────
-DO $$ BEGIN ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS active_planet_id    INT     DEFAULT 1;          END $$;
-DO $$ BEGIN ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS overview_channel_id BIGINT  DEFAULT NULL;       END $$;
-DO $$ BEGIN ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS overview_message_id BIGINT  DEFAULT NULL;       END $$;
-DO $$ BEGIN ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS theme_bot_name       TEXT NOT NULL DEFAULT 'IRON PACT'; END $$;
-DO $$ BEGIN ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS theme_player_faction TEXT NOT NULL DEFAULT 'Iron Pact PMC'; END $$;
-DO $$ BEGIN ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS theme_enemy_faction  TEXT NOT NULL DEFAULT 'Enemy'; END $$;
-DO $$ BEGIN ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS theme_player_unit    TEXT NOT NULL DEFAULT 'Unit'; END $$;
-DO $$ BEGIN ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS theme_enemy_unit     TEXT NOT NULL DEFAULT 'Enemy Unit'; END $$;
-DO $$ BEGIN ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS theme_safe_zone      TEXT NOT NULL DEFAULT 'FOB Alpha'; END $$;
-DO $$ BEGIN ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS theme_flavor_text    TEXT NOT NULL DEFAULT 'The contract must be fulfilled.'; END $$;
-DO $$ BEGIN ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS theme_color          INT  NOT NULL DEFAULT 11141120; END $$;
-DO $$ BEGIN ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS citadel_besieged     BOOLEAN NOT NULL DEFAULT FALSE; END $$;
-DO $$ BEGIN ALTER TABLE squadrons    ADD COLUMN IF NOT EXISTS planet_id            INT NOT NULL DEFAULT 1; END $$;
-DO $$ BEGIN ALTER TABLE enemy_units  ADD COLUMN IF NOT EXISTS planet_id            INT NOT NULL DEFAULT 1; END $$;
-DO $$ BEGIN ALTER TABLE combat_log   ADD COLUMN IF NOT EXISTS planet_id            INT NOT NULL DEFAULT 1; END $$;
-DO $$ BEGIN ALTER TABLE turn_history ADD COLUMN IF NOT EXISTS planet_id            INT NOT NULL DEFAULT 1; END $$;
-DO $$ BEGIN ALTER TABLE enemy_gm_moves ADD COLUMN IF NOT EXISTS planet_id          INT NOT NULL DEFAULT 1; END $$;
+-- Migration guards
+DO $$ BEGIN ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS enlist_channel_id  BIGINT DEFAULT NULL; END $$;
+DO $$ BEGIN ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS enlist_message_id  BIGINT DEFAULT NULL; END $$;
+DO $$ BEGIN ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS active_planet_id   INT    DEFAULT 1;    END $$;
+DO $$ BEGIN ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS overview_channel_id BIGINT DEFAULT NULL; END $$;
+DO $$ BEGIN ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS overview_message_id BIGINT DEFAULT NULL; END $$;
+DO $$ BEGIN ALTER TABLE squadrons    ADD COLUMN IF NOT EXISTS brigade            TEXT    NOT NULL DEFAULT 'infantry'; END $$;
+DO $$ BEGIN ALTER TABLE squadrons    ADD COLUMN IF NOT EXISTS transit_turns_left INT     NOT NULL DEFAULT 0; END $$;
+DO $$ BEGIN ALTER TABLE squadrons    ADD COLUMN IF NOT EXISTS last_moved_turn    INT     NOT NULL DEFAULT -1; END $$;
+DO $$ BEGIN ALTER TABLE squadrons    ADD COLUMN IF NOT EXISTS is_dug_in          BOOLEAN NOT NULL DEFAULT FALSE; END $$;
+DO $$ BEGIN ALTER TABLE squadrons    ADD COLUMN IF NOT EXISTS artillery_armed    BOOLEAN NOT NULL DEFAULT FALSE; END $$;
+DO $$ BEGIN ALTER TABLE squadrons    ADD COLUMN IF NOT EXISTS planet_id          INT     NOT NULL DEFAULT 1; END $$;
+DO $$ BEGIN ALTER TABLE enemy_units  ADD COLUMN IF NOT EXISTS planet_id          INT     NOT NULL DEFAULT 1; END $$;
+DO $$ BEGIN ALTER TABLE combat_log   ADD COLUMN IF NOT EXISTS planet_id          INT     NOT NULL DEFAULT 1; END $$;
+DO $$ BEGIN ALTER TABLE turn_history ADD COLUMN IF NOT EXISTS planet_id          INT     NOT NULL DEFAULT 1; END $$;
+DO $$ BEGIN ALTER TABLE enemy_gm_moves ADD COLUMN IF NOT EXISTS planet_id        INT    NOT NULL DEFAULT 1; END $$;
