@@ -98,7 +98,7 @@ def render_planet_map(
     f_pip    = _font(_SANS,     7)
     f_legend = _font(_SANSREG, 11)
 
-    # ── Draw all 703 hexes ────────────────────────────────────────────────────
+    # ── Draw all hexes (terrain + status tint + labels) ───────────────────────
     for gq, gr in GRID_COORDS:
         key     = hex_key(gq, gr)
         cx, cy  = hex_center(gq, gr, HEX_SIZE, ox, oy)
@@ -127,13 +127,13 @@ def render_planet_map(
             try:
                 bb   = draw.textbbox((0,0), abbr, font=f_abbr)
                 aw   = (bb[2]-bb[0])/2
-                dark = g < 140
-                tc   = (210,210,210,190) if dark else (35,35,35,190)
+                # Use white on dark tiles (mountain), black on everything else
+                tc   = (220,220,220,220) if g < 120 else (30,30,30,220)
                 draw.text((cx-aw, cy - HEX_SIZE*0.52), abbr, font=f_abbr, fill=tc)
             except Exception:
                 pass
 
-        # Global coord label — centered (unique across whole map)
+        # Global coord label — centered
         lbl = key
         try:
             bb  = draw.textbbox((0,0), lbl, font=f_coord)
@@ -144,22 +144,26 @@ def render_planet_map(
         except Exception:
             pass
 
-        # Unit markers — Option A: small squares at bottom edge
-        units = unit_data.get(key, {})
-        p_ct  = units.get("players", 0)
-        e_ct  = units.get("enemy",   0)
+    # ── Draw unit markers in a separate pass so tint compositing can't erase them ──
+    draw = ImageDraw.Draw(img)
+    for gq, gr in GRID_COORDS:
+        key    = hex_key(gq, gr)
+        cx, cy = hex_center(gq, gr, HEX_SIZE, ox, oy)
+        units  = unit_data.get(key, {})
+        p_ct   = units.get("players", 0)
+        e_ct   = units.get("enemy",   0)
 
         if p_ct > 0 or e_ct > 0:
-            dot_y = cy + HEX_SIZE * 0.60
-            dot_r = 5
+            dot_y = cy + HEX_SIZE * 0.55
+            dot_r = 6
 
             if p_ct > 0 and e_ct > 0:
                 draw.rectangle(
                     (cx-dot_r*2-1, dot_y-dot_r, cx-1, dot_y+dot_r),
-                    fill=(55,80,200,230), outline=(200,210,255,255), width=1)
+                    fill=(55,80,200,255), outline=(200,210,255,255), width=1)
                 draw.rectangle(
                     (cx+1, dot_y-dot_r, cx+dot_r*2+1, dot_y+dot_r),
-                    fill=(190,40,40,230), outline=(255,190,190,255), width=1)
+                    fill=(190,40,40,255), outline=(255,190,190,255), width=1)
                 try:
                     bb = draw.textbbox((0,0), str(p_ct), font=f_pip)
                     pw,ph = (bb[2]-bb[0])/2,(bb[3]-bb[1])/2
@@ -174,7 +178,7 @@ def render_planet_map(
             elif p_ct > 0:
                 draw.rectangle(
                     (cx-dot_r, dot_y-dot_r, cx+dot_r, dot_y+dot_r),
-                    fill=(55,80,200,230), outline=(200,210,255,255), width=1)
+                    fill=(55,80,200,255), outline=(200,210,255,255), width=1)
                 try:
                     bb = draw.textbbox((0,0), str(p_ct), font=f_pip)
                     pw,ph = (bb[2]-bb[0])/2,(bb[3]-bb[1])/2
@@ -185,7 +189,7 @@ def render_planet_map(
             else:
                 draw.rectangle(
                     (cx-dot_r, dot_y-dot_r, cx+dot_r, dot_y+dot_r),
-                    fill=(190,40,40,230), outline=(255,190,190,255), width=1)
+                    fill=(190,40,40,255), outline=(255,190,190,255), width=1)
                 try:
                     bb = draw.textbbox((0,0), str(e_ct), font=f_pip)
                     ew,eh = (bb[2]-bb[0])/2,(bb[3]-bb[1])/2
