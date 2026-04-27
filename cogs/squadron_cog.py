@@ -471,6 +471,9 @@ class DeployModal(discord.ui.Modal, title="Deploy Your Unit"):
             await interaction.response.send_message(
                 f"Invalid hex `{dest}`. Use format `gq,gr` e.g. `3,-2`.", ephemeral=True); return
 
+        # Defer immediately — DB work + map renders can exceed Discord's 3-second window
+        await interaction.response.defer(ephemeral=True)
+
         # Guarantee guild_config row exists so active_planet_id is never NULL
         await ensure_guild(self.guild_id)
 
@@ -483,7 +486,7 @@ class DeployModal(discord.ui.Modal, title="Deploy Your Unit"):
                 "WHERE guild_id=$1 AND planet_id=$2 AND owner_id=$3 AND is_active=TRUE",
                 self.guild_id, planet_id, interaction.user.id)
             if existing:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     "You already have an active unit.", ephemeral=True); return
 
             # Block re-enlist if they have a dead unit (hp=0) this contract
@@ -492,7 +495,7 @@ class DeployModal(discord.ui.Modal, title="Deploy Your Unit"):
                 "WHERE guild_id=$1 AND planet_id=$2 AND owner_id=$3 AND hp<=0",
                 self.guild_id, planet_id, interaction.user.id)
             if dead:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     "❌ Your unit was **permanently destroyed** this contract. "
                     "You cannot re-enlist until the GM concludes the current contract.",
                     ephemeral=True); return
@@ -560,7 +563,7 @@ class DeployModal(discord.ui.Modal, title="Deploy Your Unit"):
                 + "\n".join(f"  · {s}" for s in brig["specials"])
             ),
         )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
