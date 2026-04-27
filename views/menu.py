@@ -104,42 +104,8 @@ async def _send_overview(i: discord.Interaction):
 # ── Unit panel ────────────────────────────────────────────────────────────────
 
 async def _send_unit_panel(i: discord.Interaction):
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        theme     = await get_theme(conn, i.guild_id)
-        planet_id = await get_active_planet_id(conn, i.guild_id)
-        sq        = await conn.fetchrow(
-            "SELECT * FROM squadrons "
-            "WHERE guild_id=$1 AND planet_id=$2 AND owner_id=$3 AND is_active=TRUE LIMIT 1",
-            i.guild_id, planet_id, i.user.id)
-        if not sq:
-            await i.response.send_message(
-                f"No active {theme.get('player_unit','unit')}. Use `/enlist`.",
-                ephemeral=True)
-            return
-        turn_count = await conn.fetchval(
-            "SELECT COUNT(*) FROM turn_history WHERE guild_id=$1 AND planet_id=$2",
-            i.guild_id, planet_id) or 0
-
-    transit_str = (f"\n⚠️ **IN TRANSIT** → `{sq['transit_destination']}`"
-                   if sq["in_transit"] else "")
-    embed = discord.Embed(
-        title=f"🪖 {sq['owner_name']} — {sq['name']}",
-        color=theme.get("color", 0xAA2222),
-        description=(
-            f"**Position:** `{sq['hex_address']}`{transit_str}\n\n"
-            f"**Stats**\n"
-            f"  ATK  {_bar(sq['attack'])}  {sq['attack']}\n"
-            f"  DEF  {_bar(sq['defense'])}  {sq['defense']}\n"
-            f"  SPD  {_bar(sq['speed'])}  {sq['speed']}\n"
-            f"  MRL  {_bar(sq['morale'])}  {sq['morale']}\n"
-            f"  SUP  {_bar(sq['supply'])}  {sq['supply']}\n"
-            f"  RCN  {_bar(sq['recon'])}  {sq['recon']}\n"
-        ),
-    )
-    embed.set_footer(text=f"Turn {turn_count} · {theme.get('flavor_text','')}")
-    await i.response.send_message(
-        embed=embed, view=UnitActionView(i.guild_id), ephemeral=True)
+    from cogs.squadron_cog import send_unit_panel
+    await send_unit_panel(i, i.guild_id)
 
 
 # ── Unit action sub-panel ─────────────────────────────────────────────────────
@@ -149,15 +115,15 @@ class UnitActionView(View):
         super().__init__(timeout=300)
         self.guild_id = guild_id
 
-    @discord.ui.button(label="📍 Move Unit",       style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="📍 Move Unit",       style=discord.ButtonStyle.primary,   custom_id="unit_action_move")
     async def move_unit(self, i: discord.Interaction, b: Button):
         await i.response.send_modal(MoveModal(self.guild_id))
 
-    @discord.ui.button(label="🔍 Scavenge Supply", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="🔍 Scavenge Supply", style=discord.ButtonStyle.secondary, custom_id="unit_action_scavenge")
     async def scavenge(self, i: discord.Interaction, b: Button):
         await _safe(i, _do_scavenge(i, self.guild_id))
 
-    @discord.ui.button(label="← Back",             style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="← Back",             style=discord.ButtonStyle.secondary, custom_id="unit_action_back")
     async def back(self, i: discord.Interaction, b: Button):
         pool = await get_pool()
         async with pool.acquire() as conn:
