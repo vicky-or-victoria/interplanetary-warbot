@@ -122,9 +122,11 @@ class UnitPanelView(discord.ui.View):
             await interaction.response.send_message("No active unit.", ephemeral=True); return
         if sq["in_transit"]:
             await interaction.response.send_message("Unit is already in transit.", ephemeral=True); return
+        max_s = move_steps(sq["brigade"])
         embed = _move_embed(sq["hex_address"], sq["brigade"], sq["name"])
         await interaction.response.send_message(
-            embed=embed, view=MoveDirectionView(self.guild_id), ephemeral=True)
+            embed=embed, view=MoveDirectionView(self.guild_id, max_steps=max_s, chosen_steps=max_s),
+            ephemeral=True)
 
     async def _fast_travel(self, interaction: discord.Interaction):
         await interaction.response.send_modal(FastTravelModal(self.guild_id))
@@ -559,14 +561,22 @@ class DeployModal(discord.ui.Modal, title="Deploy Your Unit"):
 # MOVE PAD
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _move_embed(hex_addr: str, brigade: str, unit_name: str) -> discord.Embed:
+def _move_embed(hex_addr: str, brigade: str, unit_name: str, chosen_steps: int = None) -> discord.Embed:
     brig  = get_brigade(brigade)
     steps = move_steps(brigade)
     nbrs  = hex_neighbors(hex_addr)
+    if chosen_steps is None:
+        chosen_steps = steps
+    step_note = (
+        f"Moving **{chosen_steps}** hex{'es' if chosen_steps > 1 else ''} per press "
+        f"(max {steps})"
+        if steps > 1 else
+        f"Moves **1** hex per step"
+    )
     return discord.Embed(
         title=f"📍 Move — {brig['emoji']} {unit_name}",
         description=(
-            f"At `{hex_addr}` · Moves **{steps}** hex(es) per step\n"
+            f"At `{hex_addr}` · {step_note}\n"
             f"Adjacent: {', '.join(f'`{n}`' for n in nbrs) or 'none'}"
         ),
         color=0x445588,
@@ -575,19 +585,59 @@ def _move_embed(hex_addr: str, brigade: str, unit_name: str) -> discord.Embed:
 
 class MoveDirectionView(discord.ui.View):
     """
-    Hex directional pad. Flat-top layout:
-      Row 0: [NW]  [NE]
-      Row 1: [W ]  [·]  [E]
-      Row 2: [SW]  [SE]
-      Row 3: [Fast Travel]  [Done]
-    """
-    def __init__(self, guild_id: int):
-        super().__init__(timeout=120)
-        self.guild_id = guild_id
+    Hex directional pad for a flat-top hex grid.
 
-    async def _do_move(self, interaction: discord.Interaction, dir_index: int):
-        dq, dr = DIRECTIONS[dir_index]
-        pool   = await get_pool()
+    Flat-top hexes have 6 directions — there is no true N or S, only:
+        NW (5)  NE (4? — index per DIRECTIONS array)
+        W  (3)       E  (0)
+        SW (2)  SE (1)
+
+    Discord allows max 5 rows of up to 5 components each.
+
+    Layout chosen:
+      Row 0: [NW] [·] [NE]          ← top diagonal pair, centre spacer
+      Row 1: [W ] [·] [E ]          ← horizontal pair, centre spacer
+      Row 2: [SW] [·] [SE]          ← bottom diagonal pair, centre spacer
+      Row 3: Step selector (Select) — only added when move_steps > 1
+      Row 4: [🚀 Fast Travel]  [✓ Done]
+
+    The "·" spacers are disabled placeholder buttons that keep the columns
+    visually aligned so the compass reads naturally.
+
+    When a unit has move_steps > 1 the player can pick how many hexes to
+    traverse in a single press (1 … move_steps) via the Select on row 3.
+    The selection persists across button presses until they change it.
+    """
+
+    # DIRECTIONS index mapping (from hexmap.py):
+    # 0=E, 1=SE, 2=SW, 3=W, 4=NW, 5=NE
+    _DIR = {
+        "NW": 4,
+        "NE": 5,
+        "W":  3,
+        "E":  0,
+        "SW": 2,
+        "SE": 1,
+    }
+
+    def __init__(self, guild_id: int, max_steps: int = 1, chosen_steps: int = 1):
+        super().__init__(timeout=120)
+        self.guild_id     = guild_id
+        self.max_steps    = max_steps
+        self.chosen_steps = chosen_steps  # how many hexes the player has chosen to move
+
+        # ── Step selector (row 3) — only when unit can move more than 1 hex ──
+        if max_steps > 1:
+            select = StepSelect(max_steps=max_steps, current=chosen_steps)
+            select.row = 3
+            self.add_item(select)
+
+    # ── Internal move logic ────────────────────────────────────────────────────
+
+    async def _do_move(self, interaction: discord.Interaction, dir_key: str):
+        dir_index = self._DIR[dir_key]
+        dq, dr    = DIRECTIONS[dir_index]
+        pool      = await get_pool()
         async with pool.acquire() as conn:
             planet_id = await get_active_planet_id(conn, interaction.guild_id)
             sq = await conn.fetchrow(
@@ -595,13 +645,17 @@ class MoveDirectionView(discord.ui.View):
                 "WHERE guild_id=$1 AND planet_id=$2 AND owner_id=$3 AND is_active=TRUE LIMIT 1",
                 interaction.guild_id, planet_id, interaction.user.id)
             if not sq:
-                await interaction.response.send_message("No active unit.", ephemeral=True); return
+                await interaction.response.send_message("No active unit.", ephemeral=True)
+                return
             if sq["in_transit"]:
-                await interaction.response.send_message("Unit is in transit.", ephemeral=True); return
+                await interaction.response.send_message("Unit is in transit.", ephemeral=True)
+                return
 
-            steps    = move_steps(sq["brigade"])
+            max_s    = move_steps(sq["brigade"])
+            steps    = min(self.chosen_steps, max_s)
             old_addr = sq["hex_address"]
             new_addr = old_addr
+
             for _ in range(steps):
                 gq, gr    = parse_hex(new_addr)
                 candidate = hex_key(gq + dq, gr + dr)
@@ -612,14 +666,14 @@ class MoveDirectionView(discord.ui.View):
 
             if new_addr == old_addr:
                 await interaction.response.send_message(
-                    "Cannot move that direction — grid edge.", ephemeral=True); return
+                    "Cannot move that direction — grid edge.", ephemeral=True)
+                return
 
             await conn.execute(
                 "UPDATE squadrons SET hex_address=$1, is_dug_in=FALSE, "
                 "artillery_armed=FALSE WHERE id=$2",
                 new_addr, sq["id"])
 
-            # Render movement map with arrow
             map_buf = None
             try:
                 from utils.map_render import render_movement_map_for_guild
@@ -634,47 +688,91 @@ class MoveDirectionView(discord.ui.View):
             except Exception:
                 pass
 
-        embed = _move_embed(new_addr, sq["brigade"], sq["name"])
+        embed = _move_embed(new_addr, sq["brigade"], sq["name"], chosen_steps=self.chosen_steps)
+        new_view = MoveDirectionView(self.guild_id, max_steps=max_s,
+                                     chosen_steps=self.chosen_steps)
         if map_buf:
             file = discord.File(map_buf, filename="movement.png")
             embed.set_image(url="attachment://movement.png")
             await interaction.response.edit_message(
-                embed=embed, view=MoveDirectionView(self.guild_id),
-                attachments=[file])
+                embed=embed, view=new_view, attachments=[file])
         else:
-            await interaction.response.edit_message(
-                embed=embed, view=MoveDirectionView(self.guild_id))
+            await interaction.response.edit_message(embed=embed, view=new_view)
 
+    # ── Direction buttons ──────────────────────────────────────────────────────
+    # Row 0 — NW · NE
     @discord.ui.button(label="NW", style=discord.ButtonStyle.secondary, row=0)
-    async def nw(self, i, b): await self._do_move(i, 4)
+    async def nw(self, i, b): await self._do_move(i, "NW")
+
+    @discord.ui.button(label="·", style=discord.ButtonStyle.secondary, row=0, disabled=True)
+    async def _sp0(self, i, b): pass
 
     @discord.ui.button(label="NE", style=discord.ButtonStyle.secondary, row=0)
-    async def ne(self, i, b): await self._do_move(i, 5)
+    async def ne(self, i, b): await self._do_move(i, "NE")
 
-    @discord.ui.button(label="W",  style=discord.ButtonStyle.primary,   row=1)
-    async def west(self, i, b): await self._do_move(i, 3)
+    # Row 1 — W · E
+    @discord.ui.button(label="W", style=discord.ButtonStyle.primary, row=1)
+    async def west(self, i, b): await self._do_move(i, "W")
 
-    @discord.ui.button(label="·",  style=discord.ButtonStyle.secondary, row=1, disabled=True)
-    async def center(self, i, b): pass
+    @discord.ui.button(label="·", style=discord.ButtonStyle.secondary, row=1, disabled=True)
+    async def _sp1(self, i, b): pass
 
-    @discord.ui.button(label="E",  style=discord.ButtonStyle.primary,   row=1)
-    async def east(self, i, b): await self._do_move(i, 0)
+    @discord.ui.button(label="E", style=discord.ButtonStyle.primary, row=1)
+    async def east(self, i, b): await self._do_move(i, "E")
 
+    # Row 2 — SW · SE
     @discord.ui.button(label="SW", style=discord.ButtonStyle.secondary, row=2)
-    async def sw(self, i, b): await self._do_move(i, 2)
+    async def sw(self, i, b): await self._do_move(i, "SW")
+
+    @discord.ui.button(label="·", style=discord.ButtonStyle.secondary, row=2, disabled=True)
+    async def _sp2(self, i, b): pass
 
     @discord.ui.button(label="SE", style=discord.ButtonStyle.secondary, row=2)
-    async def se(self, i, b): await self._do_move(i, 1)
+    async def se(self, i, b): await self._do_move(i, "SE")
 
-    @discord.ui.button(label="🚀 Fast Travel", style=discord.ButtonStyle.danger, row=3)
+    # Row 4 — action buttons (row 3 is reserved for StepSelect when present)
+    @discord.ui.button(label="🚀 Fast Travel", style=discord.ButtonStyle.danger, row=4)
     async def fast_travel(self, i, b):
         await i.response.send_modal(FastTravelModal(self.guild_id))
 
-    @discord.ui.button(label="✓ Done", style=discord.ButtonStyle.success, row=3)
+    @discord.ui.button(label="✓ Done", style=discord.ButtonStyle.success, row=4)
     async def done(self, i, b):
         await i.response.edit_message(
             embed=discord.Embed(description="Movement complete.", color=0x446644),
             view=None)
+
+
+class StepSelect(discord.ui.Select):
+    """
+    Dropdown that lets the player choose how many hexes to move per button press.
+    Appears on row 3 of MoveDirectionView only when the brigade's move_steps > 1.
+    """
+    def __init__(self, max_steps: int, current: int):
+        options = [
+            discord.SelectOption(
+                label=f"Move {n} hex{'es' if n > 1 else ''}",
+                value=str(n),
+                default=(n == current),
+                description="per direction press",
+            )
+            for n in range(1, max_steps + 1)
+        ]
+        super().__init__(
+            placeholder=f"Step size: {current} hex{'es' if current > 1 else ''}",
+            options=options,
+            min_values=1,
+            max_values=1,
+        )
+        self.max_steps = max_steps
+
+    async def callback(self, interaction: discord.Interaction):
+        chosen = int(self.values[0])
+        new_view = MoveDirectionView(
+            guild_id     = self.view.guild_id,
+            max_steps    = self.max_steps,
+            chosen_steps = chosen,
+        )
+        await interaction.response.edit_message(view=new_view)
 
 
 class FastTravelModal(discord.ui.Modal, title="Fast Travel"):
