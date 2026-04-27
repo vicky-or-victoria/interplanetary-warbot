@@ -49,7 +49,7 @@ class MainMenuView(View):
     async def my_unit(self, i: discord.Interaction, b: Button):
         await _safe(i, _send_unit_panel(i))
 
-    @discord.ui.button(label="📊 War Status",    style=discord.ButtonStyle.secondary, custom_id="menu_status",     row=1)
+    @discord.ui.button(label="📊 Contract Status", style=discord.ButtonStyle.secondary, custom_id="menu_status",     row=1)
     async def war_status(self, i: discord.Interaction, b: Button):
         await _safe(i, _send_war_status(i))
 
@@ -223,7 +223,7 @@ async def _send_war_status(i: discord.Interaction):
             "SELECT name, contractor, enemy_type FROM planets WHERE guild_id=$1 AND id=$2",
             i.guild_id, planet_id)
         cfg       = await conn.fetchrow(
-            "SELECT game_started, turn_interval_hours FROM guild_config WHERE guild_id=$1",
+            "SELECT game_started, turn_interval_hours, contract_name FROM guild_config WHERE guild_id=$1",
             i.guild_id)
         p_count   = await conn.fetchval(
             "SELECT COUNT(DISTINCT owner_id) FROM squadrons "
@@ -241,8 +241,9 @@ async def _send_war_status(i: discord.Interaction):
             "WHERE guild_id=$1 AND planet_id=$2 GROUP BY status",
             i.guild_id, planet_id)
 
+    contract_name = (cfg["contract_name"] if cfg and cfg["contract_name"] else "Unassigned")
     embed = discord.Embed(
-        title=f"📊 {theme.get('bot_name','WARBOT')} — War Status",
+        title=f"📊 {theme.get('bot_name','WARBOT')} — Contract: {contract_name}",
         color=theme.get("color", 0xAA2222),
         description=(
             f"**State:** {'🟢 Active' if cfg and cfg['game_started'] else '🔴 Paused'} "
@@ -321,7 +322,7 @@ async def build_menu_embed(guild_id: int, conn, theme: dict = None) -> discord.E
         "SELECT name, contractor, enemy_type FROM planets WHERE guild_id=$1 AND id=$2",
         guild_id, planet_id)
     cfg        = await conn.fetchrow(
-        "SELECT game_started, turn_interval_hours FROM guild_config WHERE guild_id=$1",
+        "SELECT game_started, turn_interval_hours, contract_name FROM guild_config WHERE guild_id=$1",
         guild_id)
     turn_count = await conn.fetchval(
         "SELECT COUNT(*) FROM turn_history WHERE guild_id=$1 AND planet_id=$2",
@@ -344,10 +345,12 @@ async def build_menu_embed(guild_id: int, conn, theme: dict = None) -> discord.E
         guild_id, planet_id) or 0
 
     state = "ACTIVE" if cfg and cfg["game_started"] else "PAUSED"
+    contract_name = (cfg["contract_name"] if cfg and cfg["contract_name"] else "Unassigned")
     desc  = (
         f"```\n"
         f"  {theme.get('bot_name','WARBOT')}  ·  COMMAND CENTRE\n"
         f"  {'═'*40}\n"
+        f"  Contract:    {contract_name}\n"
         f"  Planet:      {planet['name'] if planet else '—'}\n"
         f"  Contractor:  {planet['contractor'] if planet else '—'}\n"
         f"  Enemy:       {planet['enemy_type'] if planet else '—'}\n"
