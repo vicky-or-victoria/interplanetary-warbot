@@ -448,7 +448,7 @@ class BrigadeSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         await interaction.response.send_modal(
-            DeployModal(self.guild_id, self.unit_name, self.values[0]))
+            DeployModal(interaction.guild_id, self.unit_name, self.values[0]))
 
 
 class DeployModal(discord.ui.Modal, title="Deploy Your Unit"):
