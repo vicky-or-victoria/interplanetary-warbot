@@ -600,7 +600,8 @@ class MoveDirectionView(discord.ui.View):
                 await interaction.response.send_message("Unit is in transit.", ephemeral=True); return
 
             steps    = move_steps(sq["brigade"])
-            new_addr = sq["hex_address"]
+            old_addr = sq["hex_address"]
+            new_addr = old_addr
             for _ in range(steps):
                 gq, gr    = parse_hex(new_addr)
                 candidate = hex_key(gq + dq, gr + dr)
@@ -609,7 +610,7 @@ class MoveDirectionView(discord.ui.View):
                 else:
                     break
 
-            if new_addr == sq["hex_address"]:
+            if new_addr == old_addr:
                 await interaction.response.send_message(
                     "Cannot move that direction — grid edge.", ephemeral=True); return
 
@@ -618,8 +619,31 @@ class MoveDirectionView(discord.ui.View):
                 "artillery_armed=FALSE WHERE id=$2",
                 new_addr, sq["id"])
 
+            # Render movement map with arrow
+            map_buf = None
+            try:
+                from utils.map_render import render_movement_map_for_guild
+                map_buf = await render_movement_map_for_guild(
+                    guild_id  = interaction.guild_id,
+                    conn      = conn,
+                    from_addr = old_addr,
+                    to_addr   = new_addr,
+                    unit_name = sq["name"],
+                    planet_id = planet_id,
+                )
+            except Exception:
+                pass
+
         embed = _move_embed(new_addr, sq["brigade"], sq["name"])
-        await interaction.response.edit_message(embed=embed, view=MoveDirectionView(self.guild_id))
+        if map_buf:
+            file = discord.File(map_buf, filename="movement.png")
+            embed.set_image(url="attachment://movement.png")
+            await interaction.response.edit_message(
+                embed=embed, view=MoveDirectionView(self.guild_id),
+                attachments=[file])
+        else:
+            await interaction.response.edit_message(
+                embed=embed, view=MoveDirectionView(self.guild_id))
 
     @discord.ui.button(label="NW", style=discord.ButtonStyle.secondary, row=0)
     async def nw(self, i, b): await self._do_move(i, 4)
