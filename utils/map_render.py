@@ -10,7 +10,12 @@ import math
 import random
 from PIL import Image, ImageDraw, ImageFont
 
-from utils.hexmap import GRID_COORDS, hex_key, hex_center, hex_corners, GRID_SET
+from utils.hexmap import GRID_COORDS, hex_key, hex_center, hex_corners, GRID_SET, hexes_within, hex_distance
+
+# ── Fog of War ─────────────────────────────────────────────────────────────────
+# Enemy units are only visible to players if they are within this many hexes
+# of any friendly (player) unit.  Increase to widen player vision.
+FOG_VISION_RADIUS = 3
 
 # ── Font loader ────────────────────────────────────────────────────────────────
 
@@ -426,6 +431,15 @@ async def render_map_for_guild(guild_id: int, conn, planet_id: int = None) -> io
         "WHERE guild_id=$1 AND planet_id=$2 AND is_active=TRUE",
         guild_id, planet_id)
 
+    # ── Fog of War ─────────────────────────────────────────────────────────────
+    # Build the set of hexes visible to friendly units.
+    # Each player unit on the map illuminates all hexes within FOG_VISION_RADIUS.
+    player_positions = [r["hex_address"] for r in sq_rows]
+    visible_hexes: set = set()
+    for addr in player_positions:
+        for h in hexes_within(addr, FOG_VISION_RADIUS):
+            visible_hexes.add(h)
+
     unit_data: dict = {}
     for r in sq_rows:
         addr = r["hex_address"]
@@ -433,8 +447,10 @@ async def render_map_for_guild(guild_id: int, conn, planet_id: int = None) -> io
         unit_data[addr]["players"] += 1
     for r in en_rows:
         addr = r["hex_address"]
-        unit_data.setdefault(addr, {"players": 0, "enemy": 0})
-        unit_data[addr]["enemy"] += 1
+        # Only show this enemy unit if it falls inside a player's vision cone
+        if addr in visible_hexes:
+            unit_data.setdefault(addr, {"players": 0, "enemy": 0})
+            unit_data[addr]["enemy"] += 1
 
     turn_count = await conn.fetchval(
         "SELECT COUNT(*) FROM turn_history WHERE guild_id=$1", guild_id) or 0
