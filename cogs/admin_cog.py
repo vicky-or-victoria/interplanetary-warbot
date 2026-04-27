@@ -399,8 +399,8 @@ def _gm_panel_embed(theme: dict) -> discord.Embed:
         color=theme.get("color", 0xAA2222),
         description=(
             "**Enemy Management**\n"
-            "Spawn enemy units at any hex, queue moves for next turn,\n"
-            "or list all active enemy units on the current planet.\n\n"
+            "Spawn, move (single or bulk), list, or remove enemy units.\n\n"
+            "**🗺 GM Map** shows ALL unit positions (players + enemies) with labels.\n\n"
             "All actions are ephemeral — only you can see this panel."
         ),
     ).set_footer(text="Game Master controls")
@@ -409,7 +409,8 @@ def _gm_panel_embed(theme: dict) -> discord.Embed:
 class GmPanelView(discord.ui.View):
     """
     GM panel — enemy unit management.
-    Row 0: Spawn Enemy | Move Enemy | List Enemies
+    Row 0: Spawn Enemy | Move Enemy | Bulk Move | List Enemies
+    Row 1: Remove Enemy | GM Map
     """
     def __init__(self, bot, guild_id: int):
         super().__init__(timeout=300)
@@ -434,6 +435,11 @@ class GmPanelView(discord.ui.View):
         if not await self._check(i): return
         await i.response.send_modal(_MoveEnemyModal())
 
+    @discord.ui.button(label="📦 Bulk Move", style=discord.ButtonStyle.primary, row=0)
+    async def bulk_move_enemy(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await self._check(i): return
+        await i.response.send_modal(_BulkMoveEnemyModal())
+
     @discord.ui.button(label="📋 List Enemies", style=discord.ButtonStyle.secondary, row=0)
     async def list_enemies(self, i: discord.Interaction, b: discord.ui.Button):
         if not await self._check(i): return
@@ -446,23 +452,56 @@ class GmPanelView(discord.ui.View):
                 "FROM enemy_units WHERE guild_id=$1 AND planet_id=$2 AND is_active=TRUE "
                 "ORDER BY id",
                 i.guild_id, planet_id)
+            # Also fetch queued moves
+            queued = await conn.fetch(
+                "SELECT enemy_unit_id, target_address FROM enemy_gm_moves "
+                "WHERE guild_id=$1 AND planet_id=$2",
+                i.guild_id, planet_id)
+        queued_map = {r["enemy_unit_id"]: r["target_address"] for r in queued}
         if not rows:
             await i.response.send_message("No active enemy units.", ephemeral=True); return
-        lines = [
-            f"**ID {r['id']}** — {r['unit_type']} @ `{r['hex_address']}` "
-            f"(ATK:{r['attack']} DEF:{r['defense']})"
-            for r in rows
-        ]
+        lines = []
+        for r in rows:
+            move_str = f" → `{queued_map[r['id']]}`" if r["id"] in queued_map else ""
+            lines.append(
+                f"**ID {r['id']}** `{r['hex_address']}`{move_str} — "
+                f"{r['unit_type']} (ATK:{r['attack']} DEF:{r['defense']})"
+            )
+        # Split into pages of 20 if needed
+        description = "\n".join(lines)
         embed = discord.Embed(
-            title=f"Enemy Units ({len(rows)})",
+            title=f"Enemy Units ({len(rows)}) — queued moves shown as →",
             color=theme.get("color", 0xAA2222),
-            description="\n".join(lines))
+            description=description[:4000])
         await i.response.send_message(embed=embed, ephemeral=True)
 
-    @discord.ui.button(label="☠ Remove Enemy", style=discord.ButtonStyle.danger, row=0)
+    @discord.ui.button(label="☠ Remove Enemy", style=discord.ButtonStyle.danger, row=1)
     async def remove_enemy(self, i: discord.Interaction, b: discord.ui.Button):
         if not await self._check(i): return
         await i.response.send_modal(_RemoveEnemyModal())
+
+    @discord.ui.button(label="🗺 GM Map", style=discord.ButtonStyle.success, row=1)
+    async def gm_map(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await self._check(i): return
+        await i.response.defer(ephemeral=True, thinking=True)
+        try:
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                from utils.map_render import render_gm_map_for_guild
+                buf = await render_gm_map_for_guild(i.guild_id, conn)
+            file = discord.File(buf, filename="gm_map.png")
+            embed = discord.Embed(
+                title="🗺 GM Map — All Unit Positions",
+                description=(
+                    "🟦 **Blue labels** = player unit names (→dest if in transit)\n"
+                    "🟥 **Red labels** = enemy units (#ID + type)"
+                ),
+                color=0x226622,
+            )
+            embed.set_image(url="attachment://gm_map.png")
+            await i.followup.send(embed=embed, file=file, ephemeral=True)
+        except Exception as e:
+            await i.followup.send(f"Error rendering GM map: {e}", ephemeral=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -918,6 +957,62 @@ class _MoveEnemyModal(discord.ui.Modal, title="Queue Enemy Move"):
             """, i.guild_id, planet_id, uid, addr)
         await i.response.send_message(
             f"Unit **{uid}** queued to `{addr}` next turn.", ephemeral=True)
+
+
+class _BulkMoveEnemyModal(discord.ui.Modal, title="Bulk Queue Enemy Moves"):
+    moves_input = discord.ui.TextInput(
+        label="Moves (one per line: ID hex)",
+        placeholder="1 4,-2\n2 0,5\n3 -3,1",
+        style=discord.TextStyle.paragraph,
+        max_length=1000,
+        required=True,
+    )
+
+    async def on_submit(self, i: discord.Interaction):
+        raw_lines = str(self.moves_input).strip().splitlines()
+        pool = await get_pool()
+        successes = []
+        errors    = []
+        async with pool.acquire() as conn:
+            planet_id = await get_active_planet_id(conn, i.guild_id)
+            for line in raw_lines:
+                line = line.strip()
+                if not line:
+                    continue
+                parts = line.split()
+                if len(parts) != 2:
+                    errors.append(f"Bad format: `{line}` (expected `ID hex`)")
+                    continue
+                uid_str, addr = parts
+                if not is_valid(addr):
+                    errors.append(f"Invalid hex `{addr}` for unit `{uid_str}`")
+                    continue
+                try:
+                    uid = int(uid_str)
+                except ValueError:
+                    errors.append(f"Non-numeric ID: `{uid_str}`")
+                    continue
+                unit = await conn.fetchrow(
+                    "SELECT id FROM enemy_units WHERE guild_id=$1 AND id=$2 AND is_active=TRUE",
+                    i.guild_id, uid)
+                if not unit:
+                    errors.append(f"Unit ID {uid} not found or inactive")
+                    continue
+                await conn.execute("""
+                    INSERT INTO enemy_gm_moves (guild_id, planet_id, enemy_unit_id, target_address)
+                    VALUES ($1,$2,$3,$4)
+                    ON CONFLICT (guild_id, enemy_unit_id)
+                    DO UPDATE SET target_address=EXCLUDED.target_address
+                """, i.guild_id, planet_id, uid, addr)
+                successes.append(f"Unit **{uid}** → `{addr}`")
+
+        parts_out = []
+        if successes:
+            parts_out.append(f"✅ Queued {len(successes)} move(s):\n" + "\n".join(successes))
+        if errors:
+            parts_out.append(f"⚠ {len(errors)} error(s):\n" + "\n".join(errors))
+        msg = "\n\n".join(parts_out) or "Nothing processed."
+        await i.response.send_message(msg[:2000], ephemeral=True)
 
 
 class _RemoveEnemyModal(discord.ui.Modal, title="Remove Enemy Unit"):
