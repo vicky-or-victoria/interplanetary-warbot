@@ -171,3 +171,27 @@ DO $$ BEGIN ALTER TABLE enemy_units  ADD COLUMN IF NOT EXISTS planet_id         
 DO $$ BEGIN ALTER TABLE combat_log   ADD COLUMN IF NOT EXISTS planet_id          INT     NOT NULL DEFAULT 1; END $$;
 DO $$ BEGIN ALTER TABLE turn_history ADD COLUMN IF NOT EXISTS planet_id          INT     NOT NULL DEFAULT 1; END $$;
 DO $$ BEGIN ALTER TABLE enemy_gm_moves ADD COLUMN IF NOT EXISTS planet_id        INT    NOT NULL DEFAULT 1; END $$;
+
+-- v3 hex schema migration: drop old two-level columns if they exist (makes level NOT NULL safe to remove)
+DO $$ BEGIN
+    ALTER TABLE hexes ALTER COLUMN level DROP NOT NULL;
+EXCEPTION WHEN undefined_column THEN NULL; END $$;
+DO $$ BEGIN
+    ALTER TABLE hexes ALTER COLUMN parent_address DROP NOT NULL;
+EXCEPTION WHEN undefined_column THEN NULL; END $$;
+-- Drop old transit_step column replaced by transit_turns_left
+DO $$ BEGIN
+    ALTER TABLE squadrons DROP COLUMN IF EXISTS transit_step;
+EXCEPTION WHEN undefined_column THEN NULL; END $$;
+-- Drop old deploy_hex column
+DO $$ BEGIN
+    ALTER TABLE squadrons DROP COLUMN IF EXISTS deploy_hex;
+EXCEPTION WHEN undefined_column THEN NULL; END $$;
+-- Drop old last_combat_turn column replaced by last_moved_turn
+DO $$ BEGIN
+    ALTER TABLE squadrons DROP COLUMN IF EXISTS last_combat_turn;
+EXCEPTION WHEN undefined_column THEN NULL; END $$;
+-- Drop old citadel_besieged column from guild_config
+DO $$ BEGIN
+    ALTER TABLE guild_config DROP COLUMN IF EXISTS citadel_besieged;
+EXCEPTION WHEN undefined_column THEN NULL; END $$;
