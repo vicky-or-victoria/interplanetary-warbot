@@ -69,13 +69,13 @@ def _admin_panel_embed(theme: dict) -> discord.Embed:
         color=theme.get("color", 0xAA2222),
         description=(
             "**Game Control**\n"
-            "Start · Stop · Reset · Status · Turn Interval · **Force Turn**\n\n"
+            "Reset · Status · Turn Interval · **Force Turn**\n\n"
             "**Planets**\n"
             "List · Add · Remove · Set Active · Edit\n\n"
             "**Theme & Appearance**\n"
             "View Theme · Set Theme · Set Color\n\n"
             "**Channels & Roles**\n"
-            "Map · Overview · Menu · Enlist · Report · Admin Role · Player Role · GM Role\n\n"
+            "Map · Overview · Menu · Enlist · Report · Announcement · Admin Role · Player Role · GM Role\n\n"
             "**Terrain**\n"
             "Set Terrain · Reset Terrain"
         ),
@@ -97,44 +97,6 @@ class AdminPanelView(discord.ui.View):
         self.guild_id = guild_id
 
     # ── Row 0: Game Control ───────────────────────────────────────────────────
-
-    @discord.ui.button(label="▶ Start War", style=discord.ButtonStyle.success, row=0)
-    async def game_start(self, i: discord.Interaction, b: discord.ui.Button):
-        if not await _is_admin(self.bot, i):
-            await i.response.send_message("Admins only.", ephemeral=True); return
-        await ensure_guild(i.guild_id)
-        pool = await get_pool()
-        async with pool.acquire() as conn:
-            planet_id = await get_active_planet_id(conn, i.guild_id)
-            planet    = await conn.fetchrow(
-                "SELECT name, contractor, enemy_type FROM planets WHERE guild_id=$1 AND id=$2",
-                i.guild_id, planet_id)
-            await ensure_hexes(i.guild_id, conn, planet_id)
-            await conn.execute(
-                "UPDATE guild_config SET game_started=TRUE WHERE guild_id=$1", i.guild_id)
-            theme = await get_theme(conn, i.guild_id)
-        embed = discord.Embed(
-            title=f"{theme.get('bot_name','WARBOT')} — War Begins",
-            color=theme.get("color", 0xAA2222),
-            description=(
-                f"**Planet:** {planet['name'] if planet else 'Unknown'}\n"
-                f"**Contractor:** {planet['contractor'] if planet else '---'}\n"
-                f"**Enemy:** {planet['enemy_type'] if planet else '---'}\n\n"
-                f"Operatives may now enlist and deploy anywhere on the map.\n"
-                f"Use the Channels buttons below to set up boards."
-            ),
-        )
-        await i.response.send_message(embed=embed, ephemeral=True)
-
-    @discord.ui.button(label="⏸ Stop War", style=discord.ButtonStyle.danger, row=0)
-    async def game_stop(self, i: discord.Interaction, b: discord.ui.Button):
-        if not await _is_admin(self.bot, i):
-            await i.response.send_message("Admins only.", ephemeral=True); return
-        pool = await get_pool()
-        async with pool.acquire() as conn:
-            await conn.execute(
-                "UPDATE guild_config SET game_started=FALSE WHERE guild_id=$1", i.guild_id)
-        await i.response.send_message("⏸ War paused.", ephemeral=True)
 
     @discord.ui.button(label="🔄 Reset War", style=discord.ButtonStyle.danger, row=0)
     async def game_reset(self, i: discord.Interaction, b: discord.ui.Button):
@@ -368,6 +330,12 @@ class AdminPanelView(discord.ui.View):
             await i.response.send_message("Admins only.", ephemeral=True); return
         await i.response.send_modal(_ChannelModal("report_channel_id", "Report Channel ID"))
 
+    @discord.ui.button(label="📣 Announcement Channel", style=discord.ButtonStyle.secondary, row=3)
+    async def set_announcement_channel(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await _is_admin(self.bot, i):
+            await i.response.send_message("Admins only.", ephemeral=True); return
+        await i.response.send_modal(_ChannelModal("announcement_channel_id", "Announcement Channel ID"))
+
     # ── Row 4: Roles ──────────────────────────────────────────────────────────
 
     @discord.ui.button(label="🛡 Admin Role", style=discord.ButtonStyle.secondary, row=4)
@@ -418,6 +386,8 @@ def _gm_panel_embed(theme: dict) -> discord.Embed:
         title=f"🎮 {theme.get('bot_name', 'WARBOT')} — GM Panel",
         color=theme.get("color", 0xAA2222),
         description=(
+            "**Contract Control**\n"
+            "Start Contract · Pause Contract · Conclude Contract\n\n"
             "**Enemy Management**\n"
             "Spawn, move (single or bulk), list, or remove enemy units.\n\n"
             "**🗺 GM Map** shows ALL unit positions (players + enemies) with labels.\n\n"
@@ -428,9 +398,10 @@ def _gm_panel_embed(theme: dict) -> discord.Embed:
 
 class GmPanelView(discord.ui.View):
     """
-    GM panel — enemy unit management.
-    Row 0: Spawn Enemy | Move Enemy | Bulk Move | List Enemies
-    Row 1: Remove Enemy | GM Map
+    GM panel — contract control + enemy unit management.
+    Row 0: Start Contract | Pause Contract | Conclude Contract
+    Row 1: Spawn Enemy | Move Enemy | Bulk Move | List Enemies
+    Row 2: Remove Enemy | GM Map
     """
     def __init__(self, bot, guild_id: int):
         super().__init__(timeout=300)
@@ -445,22 +416,45 @@ class GmPanelView(discord.ui.View):
         await i.response.send_message("GMs only.", ephemeral=True)
         return False
 
-    @discord.ui.button(label="👾 Spawn Enemy", style=discord.ButtonStyle.danger, row=0)
+    # ── Row 0: Contract Control ───────────────────────────────────────────────
+
+    @discord.ui.button(label="▶ Start Contract", style=discord.ButtonStyle.success, row=0)
+    async def start_contract(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await self._check(i): return
+        await i.response.send_modal(_StartContractModal(self.bot))
+
+    @discord.ui.button(label="⏸ Pause Contract", style=discord.ButtonStyle.secondary, row=0)
+    async def pause_contract(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await self._check(i): return
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE guild_config SET game_started=FALSE WHERE guild_id=$1", i.guild_id)
+        await i.response.send_message("⏸ Contract paused.", ephemeral=True)
+
+    @discord.ui.button(label="📋 Conclude Contract", style=discord.ButtonStyle.danger, row=0)
+    async def conclude_contract(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await self._check(i): return
+        await i.response.send_modal(_ContractOutcomeModal(self.bot))
+
+    # ── Row 1: Enemy Management ───────────────────────────────────────────────
+
+    @discord.ui.button(label="👾 Spawn Enemy", style=discord.ButtonStyle.danger, row=1)
     async def spawn_enemy(self, i: discord.Interaction, b: discord.ui.Button):
         if not await self._check(i): return
         await i.response.send_modal(_SpawnEnemyModal())
 
-    @discord.ui.button(label="➡ Move Enemy", style=discord.ButtonStyle.primary, row=0)
+    @discord.ui.button(label="➡ Move Enemy", style=discord.ButtonStyle.primary, row=1)
     async def move_enemy(self, i: discord.Interaction, b: discord.ui.Button):
         if not await self._check(i): return
         await i.response.send_modal(_MoveEnemyModal())
 
-    @discord.ui.button(label="📦 Bulk Move", style=discord.ButtonStyle.primary, row=0)
+    @discord.ui.button(label="📦 Bulk Move", style=discord.ButtonStyle.primary, row=1)
     async def bulk_move_enemy(self, i: discord.Interaction, b: discord.ui.Button):
         if not await self._check(i): return
         await i.response.send_modal(_BulkMoveEnemyModal())
 
-    @discord.ui.button(label="📋 List Enemies", style=discord.ButtonStyle.secondary, row=0)
+    @discord.ui.button(label="📋 List Enemies", style=discord.ButtonStyle.secondary, row=1)
     async def list_enemies(self, i: discord.Interaction, b: discord.ui.Button):
         if not await self._check(i): return
         pool = await get_pool()
@@ -487,7 +481,6 @@ class GmPanelView(discord.ui.View):
                 f"**ID {r['id']}** `{r['hex_address']}`{move_str} — "
                 f"{r['unit_type']} (ATK:{r['attack']} DEF:{r['defense']})"
             )
-        # Split into pages of 20 if needed
         description = "\n".join(lines)
         embed = discord.Embed(
             title=f"Enemy Units ({len(rows)}) — queued moves shown as →",
@@ -495,12 +488,14 @@ class GmPanelView(discord.ui.View):
             description=description[:4000])
         await i.response.send_message(embed=embed, ephemeral=True)
 
-    @discord.ui.button(label="☠ Remove Enemy", style=discord.ButtonStyle.danger, row=1)
+    # ── Row 2: Misc ───────────────────────────────────────────────────────────
+
+    @discord.ui.button(label="☠ Remove Enemy", style=discord.ButtonStyle.danger, row=2)
     async def remove_enemy(self, i: discord.Interaction, b: discord.ui.Button):
         if not await self._check(i): return
         await i.response.send_modal(_RemoveEnemyModal())
 
-    @discord.ui.button(label="🗺 GM Map", style=discord.ButtonStyle.success, row=1)
+    @discord.ui.button(label="🗺 GM Map", style=discord.ButtonStyle.success, row=2)
     async def gm_map(self, i: discord.Interaction, b: discord.ui.Button):
         if not await self._check(i): return
         await i.response.defer(ephemeral=True, thinking=True)
@@ -931,6 +926,116 @@ class _RoleModal(discord.ui.Modal, title="Set Role"):
 
 
 # GM Modals
+class _StartContractModal(discord.ui.Modal, title="Start Contract"):
+    contract_name = discord.ui.TextInput(
+        label="Contract Name",
+        placeholder="e.g. Operation Iron Dawn",
+        max_length=80,
+        required=True,
+    )
+    rp_description = discord.ui.TextInput(
+        label="Roleplay Description / Briefing",
+        placeholder="Describe the contract, objectives, and what operatives must accomplish...",
+        style=discord.TextStyle.paragraph,
+        max_length=1000,
+        required=True,
+    )
+
+    def __init__(self, bot):
+        super().__init__()
+        self.bot = bot
+
+    async def on_submit(self, i: discord.Interaction):
+        name = str(self.contract_name).strip()
+        desc = str(self.rp_description).strip()
+        await ensure_guild(i.guild_id)
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            planet_id = await get_active_planet_id(conn, i.guild_id)
+            planet    = await conn.fetchrow(
+                "SELECT name, contractor, enemy_type FROM planets WHERE guild_id=$1 AND id=$2",
+                i.guild_id, planet_id)
+            await ensure_hexes(i.guild_id, conn, planet_id)
+            await conn.execute(
+                "UPDATE guild_config SET game_started=TRUE, contract_name=$1 WHERE guild_id=$2",
+                name, i.guild_id)
+            theme = await get_theme(conn, i.guild_id)
+            # Post to announcement channel if set
+            cfg = await conn.fetchrow(
+                "SELECT announcement_channel_id FROM guild_config WHERE guild_id=$1", i.guild_id)
+        await i.response.send_message(
+            f"✅ **Contract: {name}** has started!", ephemeral=True)
+        if cfg and cfg["announcement_channel_id"]:
+            channel = i.guild.get_channel(cfg["announcement_channel_id"])
+            if channel:
+                embed = discord.Embed(
+                    title=f"📜 Contract: {name}",
+                    color=theme.get("color", 0xAA2222),
+                    description=(
+                        f"{desc}\n\n"
+                        f"**Planet:** {planet['name'] if planet else '—'}\n"
+                        f"**Contractor:** {planet['contractor'] if planet else '—'}\n"
+                        f"**Enemy:** {planet['enemy_type'] if planet else '—'}\n\n"
+                        f"*Operatives may now enlist and deploy. Good luck.*"
+                    ),
+                )
+                embed.set_footer(text=theme.get("flavor_text", "The contract must be fulfilled."))
+                await channel.send(embed=embed)
+
+
+class _ContractOutcomeModal(discord.ui.Modal, title="Conclude Contract"):
+    outcome = discord.ui.TextInput(
+        label="Outcome",
+        placeholder="SUCCESS or FAILURE",
+        max_length=10,
+        required=True,
+    )
+    rp_description = discord.ui.TextInput(
+        label="Roleplay Outcome Description",
+        placeholder="Describe what happened — did the operatives fulfil the contract in time?",
+        style=discord.TextStyle.paragraph,
+        max_length=1200,
+        required=True,
+    )
+
+    def __init__(self, bot):
+        super().__init__()
+        self.bot = bot
+
+    async def on_submit(self, i: discord.Interaction):
+        outcome_raw = str(self.outcome).strip().upper()
+        desc        = str(self.rp_description).strip()
+        success     = "SUCCESS" in outcome_raw
+        icon        = "✅" if success else "❌"
+        label       = "CONTRACT FULFILLED" if success else "CONTRACT FAILED"
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            theme  = await get_theme(conn, i.guild_id)
+            cfg    = await conn.fetchrow(
+                "SELECT announcement_channel_id, contract_name FROM guild_config WHERE guild_id=$1",
+                i.guild_id)
+            # Pause the game
+            await conn.execute(
+                "UPDATE guild_config SET game_started=FALSE WHERE guild_id=$1", i.guild_id)
+        contract_name = (cfg["contract_name"] if cfg and cfg["contract_name"] else "Contract")
+        await i.response.send_message(
+            f"{icon} **{label}** posted to announcement channel.", ephemeral=True)
+        if cfg and cfg["announcement_channel_id"]:
+            channel = i.guild.get_channel(cfg["announcement_channel_id"])
+            if channel:
+                embed = discord.Embed(
+                    title=f"{icon} {label} — {contract_name}",
+                    color=0x22AA44 if success else 0xAA2222,
+                    description=desc,
+                )
+                embed.set_footer(text=theme.get("flavor_text", "The contract must be fulfilled."))
+                await channel.send(embed=embed)
+        else:
+            await i.followup.send(
+                "⚠ No announcement channel set. Use Admin Panel → Announcement Channel to configure one.",
+                ephemeral=True)
+
+
 class _SpawnEnemyModal(discord.ui.Modal, title="Spawn Enemy Unit"):
     unit_type   = discord.ui.TextInput(label="Unit Type", placeholder="e.g. Scout", max_length=40)
     hex_address = discord.ui.TextInput(label="Hex Address", placeholder="e.g. 6,-3", max_length=12)
