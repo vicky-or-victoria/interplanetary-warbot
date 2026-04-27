@@ -3,8 +3,7 @@ Warbot — Hex Map Geometry v3
 Flat global axial grid. Every hex is identified by a single "gq,gr" string.
 
 Grid layout:
-  Outer ring (radius 3, 37 positions) × inner ring (radius 2, 19 positions)
-  spaced at SECTOR_SPACING=3 axial units apart → 703 total hexes.
+  Single contiguous hex disk of radius 15 → 721 hexes, zero holes.
   No sector borders, no level concept, no outer/mid split.
 
 All addressing uses hex_key(gq, gr) = "gq,gr".
@@ -17,7 +16,7 @@ from typing import List, Tuple, Set, Dict, Optional
 DIRECTIONS = [(1, 0), (0, 1), (-1, 1), (-1, 0), (0, -1), (1, -1)]
 DIR_NAMES  = ["E", "SE", "SW", "W", "NW", "NE"]   # flat-top orientation
 
-SECTOR_SPACING = 5   # outer hex centres are this many axial units apart (≥5 for zero overlap with 2-ring inner grid)
+GRID_RADIUS = 15   # single contiguous disk — no holes, no artificial chokepoints
 
 
 # ── Ring / disk generators ─────────────────────────────────────────────────────
@@ -42,25 +41,14 @@ def hex_disk(max_radius: int) -> List[Tuple[int, int]]:
     return coords
 
 
-# ── Build the full 703-hex global grid ────────────────────────────────────────
-
-_OUTER_OFFSETS: List[Tuple[int, int]] = hex_disk(3)   # 37 sector origins
-_MID_OFFSETS:   List[Tuple[int, int]] = hex_disk(2)   # 19 per sector
+# ── Build the full contiguous grid ────────────────────────────────────────────
 
 def _build_grid() -> List[Tuple[int, int]]:
-    seen = set()
-    coords = []
-    for oq, or_ in _OUTER_OFFSETS:
-        for mq, mr in _MID_OFFSETS:
-            gq, gr = oq * SECTOR_SPACING + mq, or_ * SECTOR_SPACING + mr
-            if (gq, gr) not in seen:
-                seen.add((gq, gr))
-                coords.append((gq, gr))
-    return coords
+    return hex_disk(GRID_RADIUS)
 
 GRID_COORDS: List[Tuple[int, int]] = _build_grid()
 GRID_SET:    Set[Tuple[int, int]]   = set(GRID_COORDS)
-GRID_SIZE = len(GRID_COORDS)   # 703
+GRID_SIZE = len(GRID_COORDS)   # 721
 
 
 # ── Key helpers ────────────────────────────────────────────────────────────────
@@ -196,12 +184,10 @@ async def ensure_hexes(guild_id: int, conn, planet_id: int = 1):
 
 async def recompute_statuses(conn, guild_id: int, planet_id: int):
     """
-    Recompute per-hex status from controller.
-    In the flat system there is no aggregation — status mirrors controller directly,
-    with 'contested' when both player and enemy units share the hex.
-    Called after combat resolution.
+    Recompute per-hex status from live unit positions.
+    Called after combat resolution and after any deployment.
+    Updates ALL hexes that have units — not just contested ones.
     """
-    # Contested hexes: have both player and enemy units
     p_hexes = {r["hex_address"] for r in await conn.fetch(
         "SELECT hex_address FROM squadrons "
         "WHERE guild_id=$1 AND planet_id=$2 AND is_active=TRUE AND in_transit=FALSE",
@@ -210,6 +196,14 @@ async def recompute_statuses(conn, guild_id: int, planet_id: int):
         "SELECT hex_address FROM enemy_units "
         "WHERE guild_id=$1 AND planet_id=$2 AND is_active=TRUE",
         guild_id, planet_id)}
+
+    # Hexes that now have no units should revert to neutral
+    occupied = p_hexes | e_hexes
+    await conn.execute(
+        "UPDATE hexes SET controller='neutral', status='neutral' "
+        "WHERE guild_id=$1 AND planet_id=$2 AND controller != 'neutral' "
+        "AND address != ALL($3::text[])",
+        guild_id, planet_id, list(occupied) if occupied else ["__none__"])
 
     contested = p_hexes & e_hexes
     p_only    = p_hexes - e_hexes
