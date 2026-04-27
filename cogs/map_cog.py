@@ -7,6 +7,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from utils.db import get_pool, ensure_guild, get_theme, get_active_planet_id
+from cogs.admin_cog import _is_admin, _is_gm
 
 
 class MapCog(commands.Cog):
@@ -67,6 +68,42 @@ class MapCog(commands.Cog):
         if ok2: msg.append("✅ Planetary system overview updated.")
         if not msg: msg.append("❌ No map channels configured.")
         await interaction.followup.send("\n".join(msg), ephemeral=True)
+
+    @app_commands.command(
+        name="gm_map",
+        description="[GM] Full GM map — all unit positions revealed, no fog of war.",
+    )
+    async def gm_map_cmd(self, interaction: discord.Interaction):
+        """Ephemeral GM map visible only to the requesting GM/Admin."""
+        await ensure_guild(interaction.guild_id)
+        # Only GMs and admins may use this command
+        if not (await _is_admin(self.bot, interaction) or await _is_gm(interaction)):
+            await interaction.response.send_message(
+                "🚫 This command is restricted to GMs and Admins.", ephemeral=True
+            )
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            theme = await get_theme(conn, interaction.guild_id)
+            try:
+                from utils.map_render import render_gm_map_for_guild
+                buf = await render_gm_map_for_guild(interaction.guild_id, conn)
+            except Exception as e:
+                await interaction.followup.send(f"❌ GM map render failed: {e}", ephemeral=True)
+                return
+        f = discord.File(buf, filename="gm_map.png")
+        embed = discord.Embed(
+            title=f"🗺️ {theme.get('bot_name', 'WARBOT')} — GM Map (All Units)",
+            description=(
+                "**Fog of war lifted.** All player and enemy units are shown with their "
+                "exact positions. This message is only visible to you."
+            ),
+            color=0x2ECC71,
+        )
+        embed.set_image(url="attachment://gm_map.png")
+        embed.set_footer(text="GM eyes only — this response is ephemeral.")
+        await interaction.followup.send(embed=embed, file=f, ephemeral=True)
 
 
 # ── Auto-update helpers (called by turn engine + admin cog) ───────────────────
