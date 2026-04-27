@@ -18,7 +18,7 @@ from discord.ext import commands
 
 from utils.db import get_pool, init_schema
 from utils.turn_engine import TurnEngine
-from views.menu import MainMenuView
+from views.menu import MainMenuView, EnlistView
 
 logging.basicConfig(
     level=logging.INFO,
@@ -62,6 +62,7 @@ class Warbot(commands.Bot):
         # Register persistent views so buttons survive restarts
         # guild_id=0 is a sentinel; the real guild_id is read per-interaction
         self.add_view(MainMenuView(guild_id=0))
+        self.add_view(EnlistView(guild_id=0))
 
         # Start the turn engine background loop
         self.turn_engine.start()
