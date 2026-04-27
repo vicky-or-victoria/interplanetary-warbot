@@ -64,7 +64,7 @@ class MapCog(commands.Cog):
         ok2 = await auto_update_overview(self.bot, interaction.guild_id)
         msg = []
         if ok:  msg.append("✅ Tactical map updated.")
-        if ok2: msg.append("✅ Galaxy overview updated.")
+        if ok2: msg.append("✅ Planetary system overview updated.")
         if not msg: msg.append("❌ No map channels configured.")
         await interaction.followup.send("\n".join(msg), ephemeral=True)
 
