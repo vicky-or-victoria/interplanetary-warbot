@@ -527,6 +527,13 @@ class DeployModal(discord.ui.Modal, title="Deploy Your Unit"):
             except Exception:
                 pass
 
+            # Update hex controller so unit appears on map immediately
+            try:
+                from utils.hexmap import recompute_statuses
+                await recompute_statuses(conn, self.guild_id, planet_id)
+            except Exception:
+                pass
+
         brig = get_brigade(self.brigade)
         embed = discord.Embed(
             title=f"{brig['emoji']} Enlisted — {self.unit_name}",
