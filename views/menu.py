@@ -170,9 +170,9 @@ class UnitActionView(View):
 
 class MoveModal(discord.ui.Modal, title="Move Unit"):
     destination = discord.ui.TextInput(
-        label="Target Mid-Hex Address",
-        placeholder="e.g. 1,-1:0,1",
-        max_length=20, required=True)
+        label="Target Hex Address",
+        placeholder="e.g. 3,-2",
+        max_length=12, required=True)
 
     def __init__(self, guild_id: int):
         super().__init__()
@@ -180,6 +180,10 @@ class MoveModal(discord.ui.Modal, title="Move Unit"):
 
     async def on_submit(self, i: discord.Interaction):
         dest = str(self.destination).strip()
+        from utils.hexmap import is_valid, hex_distance
+        if not is_valid(dest):
+            await i.response.send_message(
+                "❌ Invalid hex. Use format `gq,gr` e.g. `3,-2`.", ephemeral=True); return
         pool = await get_pool()
         async with pool.acquire() as conn:
             theme     = await get_theme(conn, self.guild_id)
@@ -192,30 +196,27 @@ class MoveModal(discord.ui.Modal, title="Move Unit"):
                 await i.response.send_message("No active unit.", ephemeral=True); return
             if sq["in_transit"]:
                 await i.response.send_message("Already in transit.", ephemeral=True); return
-            if ":" not in dest:
-                await i.response.send_message(
-                    "❌ Use format `q,r:mq,mr` e.g. `1,-1:0,1`.", ephemeral=True); return
-            try:
-                outer_part, mid_part = dest.split(":")
-                oq, or_ = [int(x) for x in outer_part.split(",")]
-                mq, mr  = [int(x) for x in mid_part.split(",")]
-                from utils.hexmap import OUTER_SET, MID_SET
-                if (oq, or_) not in OUTER_SET or (mq, mr) not in MID_SET:
-                    raise ValueError
-            except Exception:
-                await i.response.send_message("❌ Invalid hex address.", ephemeral=True); return
 
-            current_outer = sq["hex_address"].split(":")[0]
-            if outer_part == current_outer:
+            dist = hex_distance(sq["hex_address"], dest)
+            if dist == 0:
+                await i.response.send_message("Already at that hex.", ephemeral=True); return
+
+            from utils.brigades import transit_turns as brigade_transit_turns, move_steps
+            steps = move_steps(sq["brigade"])
+            if dist <= steps:
+                # close enough to move directly this turn
                 await conn.execute(
-                    "UPDATE squadrons SET hex_address=$1 WHERE id=$2", dest, sq["id"])
+                    "UPDATE squadrons SET hex_address=$1, is_dug_in=FALSE WHERE id=$2",
+                    dest, sq["id"])
                 await i.response.send_message(f"✅ Moved to `{dest}`.", ephemeral=True)
             else:
+                turns = brigade_transit_turns(sq["brigade"])
                 await conn.execute(
                     "UPDATE squadrons SET in_transit=TRUE, transit_destination=$1, "
-                    "transit_step=1 WHERE id=$2", dest, sq["id"])
+                    "transit_turns_left=$2, is_dug_in=FALSE WHERE id=$3",
+                    dest, turns, sq["id"])
                 await i.response.send_message(
-                    f"🚀 En route to `{dest}`. Arrives in 2 turns.", ephemeral=True)
+                    f"🚀 En route to `{dest}`. Arrives in {turns} turn(s).", ephemeral=True)
 
 
 # ── Scavenge ──────────────────────────────────────────────────────────────────
@@ -271,7 +272,7 @@ async def _send_war_status(i: discord.Interaction):
             i.guild_id, planet_id) or 0
         hex_s     = await conn.fetch(
             "SELECT status, COUNT(*) AS cnt FROM hexes "
-            "WHERE guild_id=$1 AND planet_id=$2 AND level=1 GROUP BY status",
+            "WHERE guild_id=$1 AND planet_id=$2 GROUP BY status",
             i.guild_id, planet_id)
 
     embed = discord.Embed(
@@ -369,11 +370,11 @@ async def build_menu_embed(guild_id: int, conn, theme: dict = None) -> discord.E
         guild_id, planet_id) or 0
     p_hexes    = await conn.fetchval(
         "SELECT COUNT(*) FROM hexes "
-        "WHERE guild_id=$1 AND planet_id=$2 AND level=1 AND controller='players'",
+        "WHERE guild_id=$1 AND planet_id=$2 AND controller='players'",
         guild_id, planet_id) or 0
     e_hexes    = await conn.fetchval(
         "SELECT COUNT(*) FROM hexes "
-        "WHERE guild_id=$1 AND planet_id=$2 AND level=1 AND controller='enemy'",
+        "WHERE guild_id=$1 AND planet_id=$2 AND controller='enemy'",
         guild_id, planet_id) or 0
 
     state = "ACTIVE" if cfg and cfg["game_started"] else "PAUSED"
@@ -414,3 +415,102 @@ async def update_menu_embed(bot, guild_id: int, conn):
     except Exception as e:
         import logging
         logging.getLogger(__name__).warning(f"Menu embed update failed: {e}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ENLISTMENT BOARD
+# ══════════════════════════════════════════════════════════════════════════════
+
+def build_enlist_embed(theme: dict, planet_name: str, contractor: str,
+                       enemy_type: str, operative_count: int) -> discord.Embed:
+    """Build the persistent enlistment board embed."""
+    bot_name = theme.get("bot_name", "WARBOT")
+    color    = theme.get("color", 0xAA2222)
+    desc = (
+        f"```\n"
+        f"  {bot_name}  ·  RECRUITMENT CENTRE\n"
+        f"  {'═' * 40}\n"
+        f"  Planet:      {planet_name}\n"
+        f"  Contractor:  {contractor}\n"
+        f"  Enemy:       {enemy_type}\n"
+        f"  Operatives:  {operative_count} enlisted\n"
+        f"```\n"
+        f"Choose your brigade and deploy. Use `/enlist` to join the war.\n\n"
+        f"*{theme.get('flavor_text', 'The contract must be fulfilled.')}*"
+    )
+    embed = discord.Embed(
+        title=f"⚔ {bot_name} — Enlistment Board",
+        description=desc,
+        color=color,
+    )
+    embed.set_footer(text="Use /enlist to pick your brigade and deploy.")
+    return embed
+
+
+class EnlistView(View):
+    """Persistent view attached to the enlistment board message."""
+
+    def __init__(self, guild_id: int):
+        super().__init__(timeout=None)
+        self.guild_id = guild_id
+
+    @discord.ui.button(label="⚔ Enlist Now", style=discord.ButtonStyle.success,
+                       custom_id="enlist_board_enlist")
+    async def enlist_now(self, i: discord.Interaction, b: Button):
+        await i.response.send_message(
+            "Use `/enlist` with your unit name to choose your brigade and deploy.",
+            ephemeral=True)
+
+    @discord.ui.button(label="📖 Brigade Info", style=discord.ButtonStyle.secondary,
+                       custom_id="enlist_board_brigades")
+    async def brigade_info(self, i: discord.Interaction, b: Button):
+        try:
+            from utils.brigades import BRIGADES
+            lines = []
+            for key, b_data in BRIGADES.items():
+                specials = "  · ".join(b_data.get("specials", []))
+                lines.append(
+                    f"**{b_data['emoji']} {b_data['name']}** — {b_data['description']}\n"
+                    f"  {specials}"
+                )
+            embed = discord.Embed(
+                title="Brigade Roster",
+                description="\n\n".join(lines),
+                color=0xAA2222)
+            await i.response.send_message(embed=embed, ephemeral=True)
+        except Exception as e:
+            await i.response.send_message(f"❌ Error loading brigades: {e}", ephemeral=True)
+
+
+async def refresh_enlist_counter(bot, guild_id: int, conn):
+    """Update the operative count on the persistent enlistment board."""
+    try:
+        cfg = await conn.fetchrow(
+            "SELECT enlist_channel_id, enlist_message_id, active_planet_id "
+            "FROM guild_config WHERE guild_id=$1", guild_id)
+        if not cfg or not cfg["enlist_channel_id"] or not cfg["enlist_message_id"]:
+            return
+        channel = bot.get_channel(cfg["enlist_channel_id"])
+        if not channel:
+            return
+        msg = await channel.fetch_message(cfg["enlist_message_id"])
+        planet_id = cfg["active_planet_id"] or 1
+        planet = await conn.fetchrow(
+            "SELECT name, contractor, enemy_type FROM planets WHERE guild_id=$1 AND id=$2",
+            guild_id, planet_id)
+        count = await conn.fetchval(
+            "SELECT COUNT(DISTINCT owner_id) FROM squadrons "
+            "WHERE guild_id=$1 AND planet_id=$2 AND is_active=TRUE",
+            guild_id, planet_id) or 0
+        theme = await get_theme(conn, guild_id)
+        embed = build_enlist_embed(
+            theme,
+            planet["name"]       if planet else "Unknown",
+            planet["contractor"] if planet else "---",
+            planet["enemy_type"] if planet else "---",
+            count,
+        )
+        await msg.edit(embed=embed, view=EnlistView(guild_id))
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Enlist counter refresh failed: {e}")
