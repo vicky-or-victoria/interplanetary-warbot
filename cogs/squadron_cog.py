@@ -471,6 +471,9 @@ class DeployModal(discord.ui.Modal, title="Deploy Your Unit"):
             await interaction.response.send_message(
                 f"Invalid hex `{dest}`. Use format `gq,gr` e.g. `3,-2`.", ephemeral=True); return
 
+        # Guarantee guild_config row exists so active_planet_id is never NULL
+        await ensure_guild(self.guild_id)
+
         pool = await get_pool()
         async with pool.acquire() as conn:
             theme     = await get_theme(conn, self.guild_id)
@@ -530,6 +533,14 @@ class DeployModal(discord.ui.Modal, title="Deploy Your Unit"):
                 await recompute_statuses(conn, self.guild_id, planet_id)
             except Exception:
                 pass
+
+        # Push live map channel so new unit is visible without waiting for next turn
+        try:
+            from cogs.map_cog import auto_update_map, auto_update_overview
+            await auto_update_map(interaction.client, self.guild_id)
+            await auto_update_overview(interaction.client, self.guild_id)
+        except Exception:
+            pass
 
         brig = get_brigade(self.brigade)
         embed = discord.Embed(
