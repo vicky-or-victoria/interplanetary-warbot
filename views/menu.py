@@ -413,6 +413,25 @@ def build_enlist_embed(theme: dict, planet_name: str, contractor: str,
     return embed
 
 
+class _UnitNameModal(discord.ui.Modal, title="Enlist Your Unit"):
+    unit_name = discord.ui.TextInput(
+        label="Unit Name",
+        placeholder="e.g. Iron Wolves",
+        max_length=40,
+        required=True,
+    )
+
+    def __init__(self, guild_id: int):
+        super().__init__()
+        self.guild_id = guild_id
+
+    async def on_submit(self, i: discord.Interaction):
+        from cogs.squadron_cog import BrigadePickerView, brigade_picker_embed
+        name = str(self.unit_name).strip()
+        embed = brigade_picker_embed(name)
+        await i.response.send_message(embed=embed, view=BrigadePickerView(self.guild_id, name), ephemeral=True)
+
+
 class EnlistView(View):
     """Persistent view attached to the enlistment board message."""
 
@@ -423,9 +442,7 @@ class EnlistView(View):
     @discord.ui.button(label="⚔ Enlist Now", style=discord.ButtonStyle.success,
                        custom_id="enlist_board_enlist")
     async def enlist_now(self, i: discord.Interaction, b: Button):
-        await i.response.send_message(
-            "Use `/enlist` with your unit name to choose your brigade and deploy.",
-            ephemeral=True)
+        await i.response.send_modal(_UnitNameModal(self.guild_id))
 
     @discord.ui.button(label="📖 Brigade Info", style=discord.ButtonStyle.secondary,
                        custom_id="enlist_board_brigades")
