@@ -432,7 +432,7 @@ class _UnitNameModal(discord.ui.Modal, title="Enlist Your Unit"):
         from cogs.squadron_cog import BrigadePickerView, brigade_picker_embed
         name = str(self.unit_name).strip()
         embed = brigade_picker_embed(name)
-        await i.response.send_message(embed=embed, view=BrigadePickerView(self.guild_id, name), ephemeral=True)
+        await i.response.send_message(embed=embed, view=BrigadePickerView(i.guild_id, name), ephemeral=True)
 
 
 class EnlistView(View):
@@ -445,7 +445,7 @@ class EnlistView(View):
     @discord.ui.button(label="⚔ Enlist Now", style=discord.ButtonStyle.success,
                        custom_id="enlist_board_enlist")
     async def enlist_now(self, i: discord.Interaction, b: Button):
-        await i.response.send_modal(_UnitNameModal(self.guild_id))
+        await i.response.send_modal(_UnitNameModal(i.guild_id))
 
     @discord.ui.button(label="📖 Brigade Info", style=discord.ButtonStyle.secondary,
                        custom_id="enlist_board_brigades")
