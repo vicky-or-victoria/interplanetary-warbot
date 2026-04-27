@@ -41,8 +41,8 @@ class MainMenuView(View):
     async def view_map(self, i: discord.Interaction, b: Button):
         await _safe(i, _send_map(i))
 
-    @discord.ui.button(label="🪐 Galaxy",        style=discord.ButtonStyle.secondary, custom_id="menu_galaxy",     row=0)
-    async def galaxy(self, i: discord.Interaction, b: Button):
+    @discord.ui.button(label="🪐 Planetary System",        style=discord.ButtonStyle.secondary, custom_id="menu_planetary_system",     row=0)
+    async def planetary_system(self, i: discord.Interaction, b: Button):
         await _safe(i, _send_overview(i))
 
     @discord.ui.button(label="🪖 My Unit",       style=discord.ButtonStyle.primary,   custom_id="menu_my_unit",    row=0)
