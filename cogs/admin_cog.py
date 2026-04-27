@@ -289,6 +289,41 @@ class AdminPanelView(discord.ui.View):
         await i.response.send_message(
             "Choose terrain type:", view=_TerrainTypeView(i.guild_id), ephemeral=True)
 
+    @discord.ui.button(label="🎲 Random Terrain", style=discord.ButtonStyle.secondary, row=2)
+    async def map_random_terrain(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await _is_admin(self.bot, i):
+            await i.response.send_message("Admins only.", ephemeral=True); return
+        await i.response.defer(ephemeral=True, thinking=True)
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            planet_id = await get_active_planet_id(conn, i.guild_id)
+            from utils.hexmap import GRID_COORDS, hex_key
+            import random
+            # Weighted terrain distribution: mostly flat, with clusters of others
+            weights = {
+                "flat":     45,
+                "forest":   20,
+                "hill":     15,
+                "mountain":  8,
+                "city":      5,
+                "military":  4,
+                "fort":      3,
+            }
+            terrain_pool = [t for t, w in weights.items() for _ in range(w)]
+            await conn.execute(
+                "DELETE FROM hex_terrain WHERE guild_id=$1 AND planet_id=$2",
+                i.guild_id, planet_id)
+            for gq, gr in GRID_COORDS:
+                addr    = hex_key(gq, gr)
+                terrain = random.choice(terrain_pool)
+                if terrain != "flat":   # skip inserting flat — it's the default
+                    await conn.execute("""
+                        INSERT INTO hex_terrain (guild_id, planet_id, address, terrain)
+                        VALUES ($1,$2,$3,$4)
+                        ON CONFLICT (guild_id, planet_id, address) DO UPDATE SET terrain=EXCLUDED.terrain
+                    """, i.guild_id, planet_id, addr, terrain)
+        await i.followup.send("🎲 Terrain randomised!", ephemeral=True)
+
     @discord.ui.button(label="🔃 Reset Terrain", style=discord.ButtonStyle.danger, row=2)
     async def map_reset_terrain(self, i: discord.Interaction, b: discord.ui.Button):
         if not await _is_admin(self.bot, i):
