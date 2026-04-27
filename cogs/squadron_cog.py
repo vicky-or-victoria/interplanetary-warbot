@@ -44,12 +44,15 @@ async def build_unit_embed(sq, theme: dict, turn_count: int) -> discord.Embed:
     if sq["artillery_armed"]: flags.append("🎯 Artillery Armed")
     flag_str = "  ·  ".join(flags) + "\n" if flags else ""
 
+    hp     = sq["hp"] if "hp" in sq.keys() else 3
+    hp_bar = "❤️" * hp + "🖤" * (3 - hp)
     embed = discord.Embed(
         title=f"{brig['emoji']} {sq['owner_name']} — {sq['name']}",
         color=theme.get("color", 0xAA2222),
         description=(
             f"**Brigade:** {brig['name']}\n"
             f"**Position:** `{sq['hex_address']}`{transit_str}\n"
+            f"**HP:** {hp_bar} `{hp}/3`\n"
             f"{flag_str}\n"
             f"```\n"
             f"  ATK  {_bar(sq['attack'])}  {sq['attack']}\n"
@@ -105,11 +108,6 @@ class UnitPanelView(discord.ui.View):
         list_btn.callback = self._list_units
         self.add_item(list_btn)
 
-        disband_btn = discord.ui.Button(
-            label="🗑 Disband", style=discord.ButtonStyle.danger, row=2)
-        disband_btn.callback = self._disband
-        self.add_item(disband_btn)
-
     async def _move(self, interaction: discord.Interaction):
         pool = await get_pool()
         async with pool.acquire() as conn:
@@ -136,20 +134,6 @@ class UnitPanelView(discord.ui.View):
 
     async def _list_units(self, interaction: discord.Interaction):
         await _do_list_units(interaction, self.guild_id)
-
-    async def _disband(self, interaction: discord.Interaction):
-        pool = await get_pool()
-        async with pool.acquire() as conn:
-            planet_id = await get_active_planet_id(conn, self.guild_id)
-            sq = await conn.fetchrow(
-                "SELECT id, name FROM squadrons "
-                "WHERE guild_id=$1 AND planet_id=$2 AND owner_id=$3 AND is_active=TRUE LIMIT 1",
-                self.guild_id, planet_id, interaction.user.id)
-        if not sq:
-            await interaction.response.send_message("No active unit to disband.", ephemeral=True); return
-        view = _ConfirmDisbandView(interaction.user.id, sq["id"], sq["name"])
-        await interaction.response.send_message(
-            f"Permanently disband **{sq['name']}**?", view=view, ephemeral=True)
 
 
 def _brigade_special_buttons(guild_id: int, brigade: str):
@@ -499,6 +483,17 @@ class DeployModal(discord.ui.Modal, title="Deploy Your Unit"):
                 await interaction.response.send_message(
                     "You already have an active unit.", ephemeral=True); return
 
+            # Block re-enlist if they have a dead unit (hp=0) this contract
+            dead = await conn.fetchrow(
+                "SELECT id FROM squadrons "
+                "WHERE guild_id=$1 AND planet_id=$2 AND owner_id=$3 AND hp<=0",
+                self.guild_id, planet_id, interaction.user.id)
+            if dead:
+                await interaction.response.send_message(
+                    "❌ Your unit was **permanently destroyed** this contract. "
+                    "You cannot re-enlist until the GM concludes the current contract.",
+                    ephemeral=True); return
+
             stats = brigade_stats(self.brigade)
             v     = lambda base: base + random.randint(-1, 2)
             await conn.execute("""
@@ -811,32 +806,6 @@ class FastTravelModal(discord.ui.Modal, title="Fast Travel"):
         await interaction.response.send_message(
             f"{brig['emoji']} **{sq['name']}** en route to `{dest}` — **{turns} turn(s)**.",
             ephemeral=True)
-
-
-# ── Disband confirm ────────────────────────────────────────────────────────────
-
-class _ConfirmDisbandView(discord.ui.View):
-    def __init__(self, user_id, sq_id, sq_name):
-        super().__init__(timeout=30)
-        self.user_id = user_id
-        self.sq_id   = sq_id
-        self.sq_name = sq_name
-
-    async def interaction_check(self, i):
-        return i.user.id == self.user_id
-
-    @discord.ui.button(label="Yes, Disband", style=discord.ButtonStyle.danger)
-    async def confirm(self, i, b):
-        pool = await get_pool()
-        async with pool.acquire() as conn:
-            await conn.execute("UPDATE squadrons SET is_active=FALSE WHERE id=$1", self.sq_id)
-        self.stop()
-        await i.response.edit_message(content=f"**{self.sq_name}** disbanded.", view=None)
-
-    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
-    async def cancel(self, i, b):
-        self.stop()
-        await i.response.edit_message(content="Cancelled.", view=None)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
