@@ -30,7 +30,9 @@ CREATE TABLE IF NOT EXISTS guild_config (
     theme_enemy_unit      TEXT NOT NULL DEFAULT 'Enemy Unit',
     theme_safe_zone       TEXT NOT NULL DEFAULT 'Deployment Zone',
     theme_flavor_text     TEXT NOT NULL DEFAULT 'The contract must be fulfilled.',
-    theme_color           INT  NOT NULL DEFAULT 11141120
+    theme_color           INT  NOT NULL DEFAULT 11141120,
+    contract_name         TEXT         DEFAULT NULL,
+    announcement_channel_id BIGINT     DEFAULT NULL
 );
 
 CREATE TABLE IF NOT EXISTS planets (
@@ -88,6 +90,7 @@ CREATE TABLE IF NOT EXISTS squadrons (
     last_moved_turn     INT         NOT NULL DEFAULT -1,
     is_dug_in           BOOLEAN     NOT NULL DEFAULT FALSE,
     artillery_armed     BOOLEAN     NOT NULL DEFAULT FALSE,
+    hp                  INT         NOT NULL DEFAULT 3,
     UNIQUE(guild_id, planet_id, owner_id, name)
 );
 
@@ -195,3 +198,8 @@ EXCEPTION WHEN undefined_column THEN NULL; END $$;
 DO $$ BEGIN
     ALTER TABLE guild_config DROP COLUMN IF EXISTS citadel_besieged;
 EXCEPTION WHEN undefined_column THEN NULL; END $$;
+
+-- v4 additions
+DO $$ BEGIN ALTER TABLE squadrons    ADD COLUMN IF NOT EXISTS hp                    INT    NOT NULL DEFAULT 3; END $$;
+DO $$ BEGIN ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS contract_name         TEXT   DEFAULT NULL; END $$;
+DO $$ BEGIN ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS announcement_channel_id BIGINT DEFAULT NULL; END $$;
