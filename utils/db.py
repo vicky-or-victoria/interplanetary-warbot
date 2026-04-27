@@ -48,12 +48,32 @@ async def ensure_guild(guild_id: int):
 async def _seed_planets(conn, guild_id: int):
     count = await conn.fetchval("SELECT COUNT(*) FROM planets WHERE guild_id=$1", guild_id)
     if count:
+        # Heal guilds whose active_planet_id was never set (NULL -> wrong fallback of 1)
+        current = await conn.fetchval(
+            "SELECT active_planet_id FROM guild_config WHERE guild_id=$1", guild_id)
+        if not current:
+            first_id = await conn.fetchval(
+                "SELECT id FROM planets WHERE guild_id=$1 ORDER BY sort_order, id LIMIT 1",
+                guild_id)
+            if first_id:
+                await conn.execute(
+                    "UPDATE guild_config SET active_planet_id=$1 WHERE guild_id=$2",
+                    first_id, guild_id)
         return
+    # Fresh guild: insert planets and capture the first real auto-incremented ID
+    first_id = None
     for p in DEFAULT_PLANETS:
-        await conn.execute("""
+        row = await conn.fetchrow("""
             INSERT INTO planets (guild_id, name, contractor, enemy_type, sort_order)
-            VALUES ($1,$2,$3,$4,$5) ON CONFLICT (guild_id, name) DO NOTHING
+            VALUES ($1,$2,$3,$4,$5) ON CONFLICT (guild_id, name) DO NOTHING RETURNING id
         """, guild_id, p["name"], p["contractor"], p["enemy_type"], p["sort_order"])
+        if row and first_id is None:
+            first_id = row["id"]
+    # Set active_planet_id to the first planet's actual DB id (NOT assumed to be 1)
+    if first_id:
+        await conn.execute(
+            "UPDATE guild_config SET active_planet_id=$1 WHERE guild_id=$2",
+            first_id, guild_id)
 
 
 async def get_theme(conn, guild_id: int) -> dict:
@@ -75,7 +95,12 @@ async def get_theme(conn, guild_id: int) -> dict:
 async def get_active_planet_id(conn, guild_id: int) -> int:
     row = await conn.fetchrow(
         "SELECT active_planet_id FROM guild_config WHERE guild_id=$1", guild_id)
-    return row["active_planet_id"] if row and row["active_planet_id"] else 1
+    if row and row["active_planet_id"]:
+        return row["active_planet_id"]
+    # Fallback: look up the actual first planet rather than blindly returning 1
+    first_id = await conn.fetchval(
+        "SELECT id FROM planets WHERE guild_id=$1 ORDER BY sort_order, id LIMIT 1", guild_id)
+    return first_id if first_id else 1
 
 
 async def get_planet(conn, guild_id: int, planet_id: int):
