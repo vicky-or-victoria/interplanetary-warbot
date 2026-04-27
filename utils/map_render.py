@@ -270,9 +270,9 @@ def render_planet_map(
     return buf
 
 
-# ── Galaxy overview ────────────────────────────────────────────────────────────
+# ── Planetary system overview ────────────────────────────────────────────────────────────
 
-def render_galaxy_overview(
+def render_planetary_system_overview(
     planets:          list,
     active_planet_id: int,
     theme:            dict = None,
@@ -447,7 +447,7 @@ async def render_overview_for_guild(guild_id: int, conn) -> io.BytesIO:
     planets   = await conn.fetch(
         "SELECT id, name, contractor, enemy_type FROM planets "
         "WHERE guild_id=$1 ORDER BY sort_order, id", guild_id)
-    return render_galaxy_overview([dict(p) for p in planets], active_id, theme)
+    return render_planetary_system_overview([dict(p) for p in planets], active_id, theme)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
