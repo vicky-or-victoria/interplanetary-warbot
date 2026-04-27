@@ -35,7 +35,7 @@ class MapCog(commands.Cog):
         await interaction.followup.send(embed=embed, file=f)
 
     @app_commands.command(name="map_overview",
-                          description="Show the galaxy overview (all planets).")
+                          description="Show the planetary system overview (all planets).")
     async def map_overview(self, interaction: discord.Interaction):
         await ensure_guild(interaction.guild_id)
         await interaction.response.defer(thinking=True)
