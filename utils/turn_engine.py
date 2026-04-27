@@ -193,39 +193,8 @@ class TurnEngine:
     # ── Enemy AI ──────────────────────────────────────────────────────────────
 
     async def _enemy_ai(self, conn, guild_id, planet_id, summaries, theme, enemy_type):
-        roster = _roster(enemy_type)
-        ef     = theme.get("enemy_faction", "Enemy")
-        eu     = theme.get("enemy_unit",    "Enemy Unit")
-        total  = await conn.fetchval(
-            "SELECT COUNT(*) FROM enemy_units "
-            "WHERE guild_id=$1 AND planet_id=$2 AND is_active=TRUE",
-            guild_id, planet_id) or 0
-
-        # Spawn on outermost ring
-        outer = outermost_hexes()
-        spawn_pool = []
-        for ok in outer:
-            row = await conn.fetchrow(
-                "SELECT controller FROM hexes "
-                "WHERE guild_id=$1 AND planet_id=$2 AND address=$3",
-                guild_id, planet_id, ok)
-            if not row or row["controller"] != STATUS_PLAYER:
-                spawn_pool.append(ok)
-
-        for ok in random.sample(spawn_pool, min(_MAX_SPAWNS, len(spawn_pool))):
-            unit_t = random.choice(roster)
-            stats  = _rand_stats(aggression=min(total // 4, 4))
-            await conn.execute(
-                "INSERT INTO enemy_units "
-                "(guild_id, planet_id, unit_type, hex_address, "
-                " attack, defense, speed, morale, supply, recon, manually_moved) "
-                "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,TRUE)",
-                guild_id, planet_id, unit_t, ok,
-                stats["attack"], stats["defense"], stats["speed"],
-                stats["morale"], stats["supply"], stats["recon"])
-            summaries.append(f"🔴 **{ef} {eu} [{unit_t}]** appeared at `{ok}`.")
-
-        # Move existing units inward toward densest player concentration
+        # AI spawning has been removed — only GMs may spawn enemy units.
+        # Existing units (not GM-moved this turn) move toward player positions automatically.
         units = await conn.fetch(
             "SELECT id, hex_address FROM enemy_units "
             "WHERE guild_id=$1 AND planet_id=$2 AND is_active=TRUE AND manually_moved=FALSE",
@@ -241,11 +210,9 @@ class TurnEngine:
             if not nbrs:
                 continue
             if p_hexes:
-                # Move toward nearest player hex
                 target_p = nearest_hex(addr, p_hexes)
                 target   = step_toward(addr, target_p)
             else:
-                # Move toward center (0,0)
                 target = step_toward(addr, "0,0")
             if target != addr:
                 await conn.execute(
@@ -366,6 +333,32 @@ class TurnEngine:
                     final_ctrl    = "enemy"
                     player_routed = True
                     fatigue      += 1
+                    # Deduct 1 HP from all player units in this hex
+                    for pu in p_units:
+                        new_hp = max(0, (pu.get("hp", 3) if hasattr(pu, "get") else 3) - 1)
+                        # Fetch current hp from DB since p_units is from earlier fetch
+                        cur_hp = await conn.fetchval(
+                            "SELECT hp FROM squadrons WHERE guild_id=$1 AND owner_id=$2 "
+                            "AND planet_id=$3 AND is_active=TRUE LIMIT 1",
+                            guild_id, pu["owner_id"], planet_id) or 3
+                        new_hp = max(0, cur_hp - 1)
+                        if new_hp <= 0:
+                            # Permanently destroyed — mark inactive with hp=0
+                            await conn.execute(
+                                "UPDATE squadrons SET hp=0, is_active=FALSE "
+                                "WHERE guild_id=$1 AND planet_id=$2 AND owner_id=$3 AND is_active=TRUE",
+                                guild_id, planet_id, pu["owner_id"])
+                            summaries.append(
+                                f"💀 **{pu['owner_name']}'s {pu['name']}** was **permanently destroyed** "
+                                f"— they cannot re-enlist this contract.")
+                        else:
+                            await conn.execute(
+                                "UPDATE squadrons SET hp=$1 "
+                                "WHERE guild_id=$2 AND planet_id=$3 AND owner_id=$4 AND is_active=TRUE",
+                                new_hp, guild_id, planet_id, pu["owner_id"])
+                            summaries.append(
+                                f"💔 **{pu['owner_name']}'s {pu['name']}** lost HP "
+                                f"(`{new_hp}/3 HP remaining`).")
                     break
                 else:
                     final_ctrl = "neutral"
