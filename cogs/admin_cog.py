@@ -69,7 +69,7 @@ def _admin_panel_embed(theme: dict) -> discord.Embed:
         color=theme.get("color", 0xAA2222),
         description=(
             "**Game Control**\n"
-            "Start · Stop · Reset · Status · Turn Interval\n\n"
+            "Start · Stop · Reset · Status · Turn Interval · **Force Turn**\n\n"
             "**Planets**\n"
             "List · Add · Remove · Set Active · Edit\n\n"
             "**Theme & Appearance**\n"
@@ -387,6 +387,26 @@ class AdminPanelView(discord.ui.View):
         if not await _is_admin(self.bot, i):
             await i.response.send_message("Admins only.", ephemeral=True); return
         await i.response.send_modal(_RoleModal("gamemaster_role_id", "GM Role ID"))
+
+    @discord.ui.button(label="⏩ Force Turn", style=discord.ButtonStyle.danger, row=4)
+    async def force_turn(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await _is_admin(self.bot, i):
+            await i.response.send_message("Admins only.", ephemeral=True); return
+        await i.response.defer(ephemeral=True, thinking=True)
+        try:
+            from utils.db import get_pool
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                cfg = await conn.fetchrow(
+                    "SELECT game_started FROM guild_config WHERE guild_id=$1", i.guild_id)
+                if not cfg or not cfg["game_started"]:
+                    await i.followup.send(
+                        "❌ The war hasn't started yet — start it first.", ephemeral=True)
+                    return
+                await self.bot.turn_engine._resolve(conn, i.guild_id)
+            await i.followup.send("✅ Turn forced successfully.", ephemeral=True)
+        except Exception as e:
+            await i.followup.send(f"❌ Force turn failed: {e}", ephemeral=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
