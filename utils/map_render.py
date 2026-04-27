@@ -121,26 +121,33 @@ def render_planet_map(
 
         draw.polygon(corners, outline=(b, b, b, 255), width=1)
 
-        # Terrain abbr — top center
+        # Terrain abbr — top center (always black with white outline for visibility)
         abbr = t_def.get("abbr", "")
         if abbr:
             try:
                 bb   = draw.textbbox((0,0), abbr, font=f_abbr)
                 aw   = (bb[2]-bb[0])/2
-                # Use white on dark tiles (mountain), black on everything else
-                tc   = (220,220,220,220) if g < 120 else (30,30,30,220)
-                draw.text((cx-aw, cy - HEX_SIZE*0.52), abbr, font=f_abbr, fill=tc)
+                ax   = cx - aw
+                ay   = cy - HEX_SIZE*0.52
+                # White shadow/outline for contrast on all terrain
+                for ox2, oy2 in [(-1,-1),(1,-1),(-1,1),(1,1),(0,-1),(0,1),(-1,0),(1,0)]:
+                    draw.text((ax+ox2, ay+oy2), abbr, font=f_abbr, fill=(255,255,255,200))
+                draw.text((ax, ay), abbr, font=f_abbr, fill=(0,0,0,255))
             except Exception:
                 pass
 
-        # Global coord label — centered
+        # Global coord label — centered (always black with white outline)
         lbl = key
         try:
             bb  = draw.textbbox((0,0), lbl, font=f_coord)
             lw  = (bb[2]-bb[0])/2
             lh  = (bb[3]-bb[1])/2
-            col = (40,40,40,190) if g > 148 else (185,185,185,190)
-            draw.text((cx-lw, cy-lh), lbl, font=f_coord, fill=col)
+            lx2 = cx - lw
+            ly2 = cy - lh
+            # White shadow for contrast on dark tiles
+            for ox2, oy2 in [(-1,-1),(1,-1),(-1,1),(1,1),(0,-1),(0,1),(-1,0),(1,0)]:
+                draw.text((lx2+ox2, ly2+oy2), lbl, font=f_coord, fill=(255,255,255,200))
+            draw.text((lx2, ly2), lbl, font=f_coord, fill=(0,0,0,255))
         except Exception:
             pass
 
@@ -442,6 +449,410 @@ async def render_map_for_guild(guild_id: int, conn, planet_id: int = None) -> io
         turn_number = int(turn_count) + 1,
         theme       = theme,
     )
+
+
+def render_movement_map(
+    hex_data:   dict,
+    unit_data:  dict,
+    from_addr:  str,
+    to_addr:    str,
+    unit_name:  str,
+    theme:      dict = None,
+    zoom_radius: int = 5,
+) -> io.BytesIO:
+    """
+    Renders a cropped map centered on the movement path, with a colored arrow
+    showing the unit's movement from from_addr to to_addr.
+    zoom_radius controls how many hex-rings around the movement are visible.
+    """
+    if theme is None:
+        theme = _default_theme()
+
+    px_all = [hex_center(gq, gr, HEX_SIZE) for gq, gr in GRID_COORDS]
+    xs = [p[0] for p in px_all]; ys = [p[1] for p in px_all]
+    grid_w = int(max(xs) - min(xs) + HEX_SIZE*2 + PADDING*2)
+    grid_h = int(max(ys) - min(ys) + HEX_SIZE*2 + PADDING*2)
+    img_w  = grid_w
+    img_h  = grid_h + TITLE_H + LEGEND_H
+
+    ox = int(img_w/2 - (max(xs)+min(xs))/2)
+    oy = int(TITLE_H + PADDING + grid_h/2 - (max(ys)+min(ys))/2)
+
+    BG  = 20
+    img = Image.new("RGBA", (img_w, img_h), (BG, BG, BG, 255))
+    draw = ImageDraw.Draw(img)
+
+    f_abbr  = _font(_SANS,  8)
+    f_coord = _font(_MONO,  7)
+    f_title = _font(_SERIF, 16)
+    f_pip   = _font(_SANS,  7)
+
+    # Parse from/to centers
+    try:
+        fq, fr = map(int, from_addr.split(","))
+        tq, tr = map(int, to_addr.split(","))
+        from_cx, from_cy = hex_center(fq, fr, HEX_SIZE, ox, oy)
+        to_cx,   to_cy   = hex_center(tq, tr, HEX_SIZE, ox, oy)
+    except Exception:
+        fq, fr = 0, 0
+        from_cx, from_cy = ox, oy
+        to_cx,   to_cy   = ox, oy
+
+    # Draw all hexes
+    for gq, gr in GRID_COORDS:
+        key     = hex_key(gq, gr)
+        cx, cy  = hex_center(gq, gr, HEX_SIZE, ox, oy)
+        info    = hex_data.get(key, {})
+        terrain = info.get("terrain", "flat")
+        status  = info.get("status",  "neutral")
+        t_def   = TERRAIN_DEFS.get(terrain, TERRAIN_DEFS["flat"])
+        g       = t_def["fill"]
+        b       = t_def["border"]
+        corners = hex_corners(cx, cy, HEX_SIZE - 0.8)
+
+        draw.polygon(corners, fill=(g, g, g, 255))
+
+        tint = STATUS_TINTS.get(status, (0,0,0,0))
+        if tint[3] > 0:
+            tl = Image.new("RGBA", (img_w, img_h), (0,0,0,0))
+            ImageDraw.Draw(tl).polygon(corners, fill=tint)
+            img  = Image.alpha_composite(img, tl)
+            draw = ImageDraw.Draw(img)
+
+        draw.polygon(corners, outline=(b, b, b, 255), width=1)
+
+        abbr = t_def.get("abbr", "")
+        if abbr:
+            try:
+                bb  = draw.textbbox((0,0), abbr, font=f_abbr)
+                aw  = (bb[2]-bb[0])/2
+                ax, ay = cx-aw, cy - HEX_SIZE*0.52
+                for dx2, dy2 in [(-1,-1),(1,-1),(-1,1),(1,1),(0,-1),(0,1),(-1,0),(1,0)]:
+                    draw.text((ax+dx2, ay+dy2), abbr, font=f_abbr, fill=(255,255,255,200))
+                draw.text((ax, ay), abbr, font=f_abbr, fill=(0,0,0,255))
+            except Exception:
+                pass
+
+        lbl = key
+        try:
+            bb  = draw.textbbox((0,0), lbl, font=f_coord)
+            lw2 = (bb[2]-bb[0])/2
+            lh2 = (bb[3]-bb[1])/2
+            lx2, ly2 = cx-lw2, cy-lh2
+            for dx2, dy2 in [(-1,-1),(1,-1),(-1,1),(1,1),(0,-1),(0,1),(-1,0),(1,0)]:
+                draw.text((lx2+dx2, ly2+dy2), lbl, font=f_coord, fill=(255,255,255,200))
+            draw.text((lx2, ly2), lbl, font=f_coord, fill=(0,0,0,255))
+        except Exception:
+            pass
+
+    # Unit markers pass
+    draw = ImageDraw.Draw(img)
+    for gq, gr in GRID_COORDS:
+        key    = hex_key(gq, gr)
+        cx, cy = hex_center(gq, gr, HEX_SIZE, ox, oy)
+        units  = unit_data.get(key, {})
+        p_ct   = units.get("players", 0)
+        e_ct   = units.get("enemy",   0)
+        if p_ct > 0 or e_ct > 0:
+            dot_y = cy + HEX_SIZE * 0.55
+            dot_r = 6
+            if p_ct > 0 and e_ct > 0:
+                draw.rectangle((cx-dot_r*2-1, dot_y-dot_r, cx-1, dot_y+dot_r),
+                    fill=(55,80,200,255), outline=(200,210,255,255), width=1)
+                draw.rectangle((cx+1, dot_y-dot_r, cx+dot_r*2+1, dot_y+dot_r),
+                    fill=(190,40,40,255), outline=(255,190,190,255), width=1)
+            elif p_ct > 0:
+                draw.rectangle((cx-dot_r, dot_y-dot_r, cx+dot_r, dot_y+dot_r),
+                    fill=(55,80,200,255), outline=(200,210,255,255), width=1)
+            else:
+                draw.rectangle((cx-dot_r, dot_y-dot_r, cx+dot_r, dot_y+dot_r),
+                    fill=(190,40,40,255), outline=(255,190,190,255), width=1)
+
+    # ── Draw movement arrow ────────────────────────────────────────────────────
+    draw = ImageDraw.Draw(img)
+
+    # Highlight from hex (green outline) and to hex (yellow outline)
+    try:
+        from_corners = hex_corners(from_cx, from_cy, HEX_SIZE - 0.8)
+        draw.polygon(from_corners, outline=(80, 220, 80, 255), width=3)
+    except Exception:
+        pass
+    try:
+        to_corners = hex_corners(to_cx, to_cy, HEX_SIZE - 0.8)
+        draw.polygon(to_corners, outline=(255, 220, 40, 255), width=3)
+    except Exception:
+        pass
+
+    # Draw arrow line
+    dx = to_cx - from_cx
+    dy = to_cy - from_cy
+    dist = math.sqrt(dx*dx + dy*dy) or 1
+    ux, uy = dx/dist, dy/dist
+
+    # Arrow shaft — thick cyan line
+    shaft_end_x = to_cx - ux * HEX_SIZE * 0.55
+    shaft_end_y = to_cy - uy * HEX_SIZE * 0.55
+    shaft_start_x = from_cx + ux * HEX_SIZE * 0.6
+    shaft_start_y = from_cy + uy * HEX_SIZE * 0.6
+
+    # Draw outline then fill for visibility
+    for w in [7, 5, 3]:
+        col = (0,0,0,200) if w == 7 else (80,240,200,220) if w == 5 else (160,255,230,255)
+        draw.line(
+            (shaft_start_x, shaft_start_y, shaft_end_x, shaft_end_y),
+            fill=col, width=w)
+
+    # Arrowhead
+    perp_x, perp_y = -uy, ux
+    head_size = HEX_SIZE * 0.45
+    tip_x = to_cx - ux * HEX_SIZE * 0.3
+    tip_y = to_cy - uy * HEX_SIZE * 0.3
+    left_x  = shaft_end_x + perp_x * head_size * 0.5
+    left_y  = shaft_end_y + perp_y * head_size * 0.5
+    right_x = shaft_end_x - perp_x * head_size * 0.5
+    right_y = shaft_end_y - perp_y * head_size * 0.5
+    draw.polygon(
+        [(tip_x, tip_y), (left_x, left_y), (right_x, right_y)],
+        fill=(80,240,200,240), outline=(0,0,0,200))
+
+    # Label on arrow
+    f_arrow = _font(_SANS, 9)
+    mid_x = (from_cx + to_cx) / 2
+    mid_y = (from_cy + to_cy) / 2 - 12
+    arrow_label = f"{unit_name}: {from_addr} → {to_addr}"
+    try:
+        bb   = draw.textbbox((0,0), arrow_label, font=f_arrow)
+        lw2  = (bb[2]-bb[0])/2
+        for dx2, dy2 in [(-1,-1),(1,-1),(-1,1),(1,1),(0,-1),(0,1),(-1,0),(1,0)]:
+            draw.text((mid_x-lw2+dx2, mid_y+dy2), arrow_label, font=f_arrow, fill=(0,0,0,230))
+        draw.text((mid_x-lw2, mid_y), arrow_label, font=f_arrow, fill=(80,240,200,255))
+    except Exception:
+        pass
+
+    # ── Title bar ─────────────────────────────────────────────────────────────
+    draw.rectangle((0, 0, img_w, TITLE_H), fill=(10,10,10,255))
+    title_text = f"Movement — {unit_name}  |  {from_addr} → {to_addr}"
+    try:
+        bb  = draw.textbbox((0,0), title_text, font=f_title)
+        tw, th = bb[2]-bb[0], bb[3]-bb[1]
+        draw.text(((img_w-tw)//2, (TITLE_H-th)//2), title_text, font=f_title,
+                  fill=(80,240,200,255))
+    except Exception:
+        pass
+
+    # ── Crop to movement zone ─────────────────────────────────────────────────
+    mid_map_x = int((from_cx + to_cx) / 2)
+    mid_map_y = int((from_cy + to_cy) / 2)
+    crop_r    = int((zoom_radius + 1) * HEX_SIZE * 2.2)
+    crop_x1   = max(0, mid_map_x - crop_r)
+    crop_y1   = max(TITLE_H, mid_map_y - crop_r)
+    crop_x2   = min(img_w, mid_map_x + crop_r)
+    crop_y2   = min(img_h - LEGEND_H, mid_map_y + crop_r)
+
+    cropped = img.crop((crop_x1, 0, crop_x2, crop_y2))
+
+    final = Image.new("RGB", cropped.size, (BG, BG, BG))
+    final.paste(cropped, mask=cropped.split()[3])
+    out = io.BytesIO()
+    final.save(out, format="PNG", optimize=True)
+    out.seek(0)
+    return out
+
+
+async def render_movement_map_for_guild(
+    guild_id: int,
+    conn,
+    from_addr: str,
+    to_addr:   str,
+    unit_name: str,
+    planet_id: int = None,
+) -> io.BytesIO:
+    from utils.db import get_theme, get_active_planet_id
+
+    if planet_id is None:
+        planet_id = await get_active_planet_id(conn, guild_id)
+
+    hex_rows     = await conn.fetch(
+        "SELECT address, status FROM hexes WHERE guild_id=$1 AND planet_id=$2",
+        guild_id, planet_id)
+    terrain_rows = await conn.fetch(
+        "SELECT address, terrain FROM hex_terrain WHERE guild_id=$1 AND planet_id=$2",
+        guild_id, planet_id)
+
+    hex_data: dict = {}
+    for r in hex_rows:
+        hex_data[r["address"]] = {"status": r["status"], "terrain": "flat"}
+    for r in terrain_rows:
+        if r["address"] in hex_data:
+            hex_data[r["address"]]["terrain"] = r["terrain"]
+        else:
+            hex_data[r["address"]] = {"terrain": r["terrain"], "status": "neutral"}
+
+    sq_rows = await conn.fetch(
+        "SELECT hex_address FROM squadrons "
+        "WHERE guild_id=$1 AND planet_id=$2 AND is_active=TRUE AND in_transit=FALSE",
+        guild_id, planet_id)
+    en_rows = await conn.fetch(
+        "SELECT hex_address FROM enemy_units "
+        "WHERE guild_id=$1 AND planet_id=$2 AND is_active=TRUE",
+        guild_id, planet_id)
+
+    unit_data: dict = {}
+    for r in sq_rows:
+        addr = r["hex_address"]
+        unit_data.setdefault(addr, {"players": 0, "enemy": 0})
+        unit_data[addr]["players"] += 1
+    for r in en_rows:
+        addr = r["hex_address"]
+        unit_data.setdefault(addr, {"players": 0, "enemy": 0})
+        unit_data[addr]["enemy"] += 1
+
+    theme = await get_theme(conn, guild_id)
+
+    return render_movement_map(
+        hex_data   = hex_data,
+        unit_data  = unit_data,
+        from_addr  = from_addr,
+        to_addr    = to_addr,
+        unit_name  = unit_name,
+        theme      = theme,
+    )
+
+
+async def render_gm_map_for_guild(guild_id: int, conn, planet_id: int = None) -> io.BytesIO:
+    """
+    Render a GM-only map that shows ALL unit locations with detailed labels.
+    Player units shown in blue with name, enemy units shown in red with ID+type.
+    """
+    from utils.db import get_theme, get_active_planet_id
+
+    if planet_id is None:
+        planet_id = await get_active_planet_id(conn, guild_id)
+
+    planet      = await conn.fetchrow(
+        "SELECT * FROM planets WHERE guild_id=$1 AND id=$2", guild_id, planet_id)
+    planet_name = planet["name"]       if planet else "Unknown"
+    contractor  = planet["contractor"] if planet else "Unknown"
+    enemy_type  = planet["enemy_type"] if planet else "Unknown"
+
+    hex_rows     = await conn.fetch(
+        "SELECT address, status FROM hexes WHERE guild_id=$1 AND planet_id=$2",
+        guild_id, planet_id)
+    terrain_rows = await conn.fetch(
+        "SELECT address, terrain FROM hex_terrain WHERE guild_id=$1 AND planet_id=$2",
+        guild_id, planet_id)
+
+    hex_data: dict = {}
+    for r in hex_rows:
+        hex_data[r["address"]] = {"status": r["status"], "terrain": "flat"}
+    for r in terrain_rows:
+        if r["address"] in hex_data:
+            hex_data[r["address"]]["terrain"] = r["terrain"]
+        else:
+            hex_data[r["address"]] = {"terrain": r["terrain"], "status": "neutral"}
+
+    sq_rows = await conn.fetch(
+        "SELECT hex_address, owner_name, name, brigade, in_transit, transit_destination FROM squadrons "
+        "WHERE guild_id=$1 AND planet_id=$2 AND is_active=TRUE",
+        guild_id, planet_id)
+    en_rows = await conn.fetch(
+        "SELECT id, hex_address, unit_type, attack, defense FROM enemy_units "
+        "WHERE guild_id=$1 AND planet_id=$2 AND is_active=TRUE",
+        guild_id, planet_id)
+
+    unit_data: dict = {}
+    for r in sq_rows:
+        addr = r["hex_address"]
+        unit_data.setdefault(addr, {"players": 0, "enemy": 0})
+        unit_data[addr]["players"] += 1
+    for r in en_rows:
+        addr = r["hex_address"]
+        unit_data.setdefault(addr, {"players": 0, "enemy": 0})
+        unit_data[addr]["enemy"] += 1
+
+    gm_player_labels: dict = {}
+    gm_enemy_labels:  dict = {}
+
+    for r in sq_rows:
+        addr  = r["hex_address"]
+        label = r["owner_name"][:8]
+        if r["in_transit"]:
+            label += "->" + (r["transit_destination"] or "?")[:5]
+        gm_player_labels.setdefault(addr, []).append(label)
+
+    for r in en_rows:
+        addr  = r["hex_address"]
+        label = f"#{r['id']}{r['unit_type'][:6]}"
+        gm_enemy_labels.setdefault(addr, []).append(label)
+
+    turn_count = await conn.fetchval(
+        "SELECT COUNT(*) FROM turn_history WHERE guild_id=$1", guild_id) or 0
+    theme = await get_theme(conn, guild_id)
+
+    buf = render_planet_map(
+        planet_name = f"[GM] {planet_name}",
+        contractor  = contractor,
+        enemy_type  = enemy_type,
+        hex_data    = hex_data,
+        unit_data   = unit_data,
+        turn_number = int(turn_count) + 1,
+        theme       = theme,
+    )
+
+    img  = Image.open(buf).convert("RGBA")
+    draw = ImageDraw.Draw(img)
+    f_gm = _font(_SANS, 6)
+
+    px_all = [hex_center(gq, gr, HEX_SIZE) for gq, gr in GRID_COORDS]
+    xs = [p[0] for p in px_all]; ys = [p[1] for p in px_all]
+    grid_h = int(max(ys) - min(ys) + HEX_SIZE*2 + PADDING*2)
+    img_w  = img.width
+
+    ox = int(img_w/2 - (max(xs)+min(xs))/2)
+    oy = int(TITLE_H + PADDING + grid_h/2 - (max(ys)+min(ys))/2)
+
+    for addr, labels in gm_player_labels.items():
+        try:
+            gq, gr = map(int, addr.split(","))
+            cx, cy = hex_center(gq, gr, HEX_SIZE, ox, oy)
+            dot_y  = cy + HEX_SIZE * 0.3
+            for j, lbl in enumerate(labels[:3]):
+                ty = dot_y + j * 7
+                try:
+                    bb  = draw.textbbox((0,0), lbl, font=f_gm)
+                    lw  = (bb[2]-bb[0])/2
+                    for dx2, dy2 in [(-1,0),(1,0),(0,-1),(0,1)]:
+                        draw.text((cx-lw+dx2, ty+dy2), lbl, font=f_gm, fill=(0,0,80,220))
+                    draw.text((cx-lw, ty), lbl, font=f_gm, fill=(180,210,255,255))
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    for addr, labels in gm_enemy_labels.items():
+        try:
+            gq, gr = map(int, addr.split(","))
+            cx, cy = hex_center(gq, gr, HEX_SIZE, ox, oy)
+            dot_y  = cy + HEX_SIZE * 0.3
+            for j, lbl in enumerate(labels[:3]):
+                ty = dot_y + j * 7
+                try:
+                    bb  = draw.textbbox((0,0), lbl, font=f_gm)
+                    lw  = (bb[2]-bb[0])/2
+                    for dx2, dy2 in [(-1,0),(1,0),(0,-1),(0,1)]:
+                        draw.text((cx-lw+dx2, ty+dy2), lbl, font=f_gm, fill=(80,0,0,220))
+                    draw.text((cx-lw, ty), lbl, font=f_gm, fill=(255,180,180,255))
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    final = Image.new("RGB", img.size, (20,20,20))
+    final.paste(img, mask=img.split()[3])
+    out = io.BytesIO()
+    final.save(out, format="PNG", optimize=True)
+    out.seek(0)
+    return out
 
 
 async def render_overview_for_guild(guild_id: int, conn) -> io.BytesIO:
