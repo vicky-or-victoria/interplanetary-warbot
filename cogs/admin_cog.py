@@ -1,5 +1,11 @@
 """
-Admin cog v3 — flat hex system, enlist embed, planet management.
+Admin cog v4 — fully button-driven.
+
+All admin actions are accessible via /admin_panel (one slash command).
+All GM actions are accessible via /gm_panel (one slash command).
+
+/admin_panel  → AdminPanelView   (game control, planets, theme, channels, roles, terrain)
+/gm_panel     → GmPanelView      (spawn enemy, move enemy, list enemies)
 """
 
 import random
@@ -13,71 +19,100 @@ from utils.map_render import TERRAIN_TYPES
 from utils.brigades import BRIGADES
 
 
-ENEMY_TYPES = [
-    "AI Legion", "Pirate Fleet", "Civil War Militia",
-    "Rogue Syndicate", "Xeno Collective",
-    "Mercenary Company", "Separatist Army", "Corporate Security",
-    "Cultist Swarm", "Unknown",
-]
+# ══════════════════════════════════════════════════════════════════════════════
+# PERMISSION HELPERS
+# ══════════════════════════════════════════════════════════════════════════════
 
-
-class AdminCog(commands.Cog):
-    def __init__(self, bot):
-        self.bot = bot
-
-    # ── Permissions ───────────────────────────────────────────────────────────
-
-    async def _is_admin(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id == self.bot.bot_owner_id:
+async def _is_admin(bot, interaction: discord.Interaction) -> bool:
+    if interaction.user.id == bot.bot_owner_id:
+        return True
+    if interaction.user.guild_permissions.administrator:
+        return True
+    if interaction.guild.owner_id == interaction.user.id:
+        return True
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        cfg = await conn.fetchrow(
+            "SELECT admin_role_id FROM guild_config WHERE guild_id=$1",
+            interaction.guild_id)
+    if cfg and cfg["admin_role_id"]:
+        role = interaction.guild.get_role(cfg["admin_role_id"])
+        if role and role in interaction.user.roles:
             return True
-        if interaction.user.guild_permissions.administrator:
-            return True
-        if interaction.guild.owner_id == interaction.user.id:
-            return True
-        pool = await get_pool()
-        async with pool.acquire() as conn:
-            cfg = await conn.fetchrow(
-                "SELECT admin_role_id FROM guild_config WHERE guild_id=$1",
-                interaction.guild_id)
-        if cfg and cfg["admin_role_id"]:
-            role = interaction.guild.get_role(cfg["admin_role_id"])
-            if role and role in interaction.user.roles:
-                return True
+    return False
+
+
+def _is_owner_only(interaction: discord.Interaction) -> bool:
+    return (interaction.user.guild_permissions.administrator
+            or interaction.guild.owner_id == interaction.user.id)
+
+
+async def _is_gm(interaction: discord.Interaction) -> bool:
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        cfg = await conn.fetchrow(
+            "SELECT gamemaster_role_id FROM guild_config WHERE guild_id=$1",
+            interaction.guild_id)
+    if not cfg or not cfg["gamemaster_role_id"]:
         return False
+    role = interaction.guild.get_role(cfg["gamemaster_role_id"])
+    return role is not None and role in interaction.user.roles
 
-    def _is_owner_only(self, interaction: discord.Interaction) -> bool:
-        return (interaction.user.id == self.bot.bot_owner_id
-                or interaction.guild.owner_id == interaction.user.id
-                or interaction.user.guild_permissions.administrator)
 
-    def _is_gm(self, interaction: discord.Interaction, gm_role_id) -> bool:
-        if not gm_role_id:
-            return False
-        role = interaction.guild.get_role(gm_role_id)
-        return role is not None and role in interaction.user.roles
+# ══════════════════════════════════════════════════════════════════════════════
+# ADMIN PANEL
+# ══════════════════════════════════════════════════════════════════════════════
 
-    # ══════════════════════════════════════════════════════════════════════════
-    # GAME CONTROL
-    # ══════════════════════════════════════════════════════════════════════════
+def _admin_panel_embed(theme: dict) -> discord.Embed:
+    return discord.Embed(
+        title=f"⚙ {theme.get('bot_name', 'WARBOT')} — Admin Panel",
+        color=theme.get("color", 0xAA2222),
+        description=(
+            "**Game Control**\n"
+            "Start · Stop · Reset · Status · Turn Interval\n\n"
+            "**Planets**\n"
+            "List · Add · Remove · Set Active · Edit\n\n"
+            "**Theme & Appearance**\n"
+            "View Theme · Set Theme · Set Color\n\n"
+            "**Channels & Roles**\n"
+            "Map · Overview · Menu · Enlist · Report · Admin Role · Player Role · GM Role\n\n"
+            "**Terrain**\n"
+            "Set Terrain · Reset Terrain"
+        ),
+    ).set_footer(text="All actions are ephemeral — only you can see them.")
 
-    @app_commands.command(name="game_start",
-                          description="[Admin] Start the war on the active planet.")
-    async def game_start(self, interaction: discord.Interaction):
-        if not await self._is_admin(interaction):
-            await interaction.response.send_message("Admins only.", ephemeral=True); return
-        await ensure_guild(interaction.guild_id)
+
+class AdminPanelView(discord.ui.View):
+    """
+    Main admin panel. 5 rows of buttons covering all admin functionality.
+    Row 0: Game Control
+    Row 1: Planets
+    Row 2: Theme
+    Row 3: Channels
+    Row 4: Roles & Terrain
+    """
+    def __init__(self, bot, guild_id: int):
+        super().__init__(timeout=300)
+        self.bot      = bot
+        self.guild_id = guild_id
+
+    # ── Row 0: Game Control ───────────────────────────────────────────────────
+
+    @discord.ui.button(label="▶ Start War", style=discord.ButtonStyle.success, row=0)
+    async def game_start(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await _is_admin(self.bot, i):
+            await i.response.send_message("Admins only.", ephemeral=True); return
+        await ensure_guild(i.guild_id)
         pool = await get_pool()
         async with pool.acquire() as conn:
-            planet_id = await get_active_planet_id(conn, interaction.guild_id)
+            planet_id = await get_active_planet_id(conn, i.guild_id)
             planet    = await conn.fetchrow(
                 "SELECT name, contractor, enemy_type FROM planets WHERE guild_id=$1 AND id=$2",
-                interaction.guild_id, planet_id)
-            await ensure_hexes(interaction.guild_id, conn, planet_id)
+                i.guild_id, planet_id)
+            await ensure_hexes(i.guild_id, conn, planet_id)
             await conn.execute(
-                "UPDATE guild_config SET game_started=TRUE WHERE guild_id=$1",
-                interaction.guild_id)
-            theme = await get_theme(conn, interaction.guild_id)
-
+                "UPDATE guild_config SET game_started=TRUE WHERE guild_id=$1", i.guild_id)
+            theme = await get_theme(conn, i.guild_id)
         embed = discord.Embed(
             title=f"{theme.get('bot_name','WARBOT')} — War Begins",
             color=theme.get("color", 0xAA2222),
@@ -86,125 +121,103 @@ class AdminCog(commands.Cog):
                 f"**Contractor:** {planet['contractor'] if planet else '---'}\n"
                 f"**Enemy:** {planet['enemy_type'] if planet else '---'}\n\n"
                 f"Operatives may now enlist and deploy anywhere on the map.\n"
-                f"Use `/set_menu_channel` and `/set_enlist_channel` to set up boards."
+                f"Use the Channels buttons below to set up boards."
             ),
         )
-        await interaction.response.send_message(embed=embed)
+        await i.response.send_message(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="game_stop", description="[Admin] Pause the war.")
-    async def game_stop(self, interaction: discord.Interaction):
-        if not await self._is_admin(interaction):
-            await interaction.response.send_message("Admins only.", ephemeral=True); return
+    @discord.ui.button(label="⏸ Stop War", style=discord.ButtonStyle.danger, row=0)
+    async def game_stop(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await _is_admin(self.bot, i):
+            await i.response.send_message("Admins only.", ephemeral=True); return
         pool = await get_pool()
         async with pool.acquire() as conn:
             await conn.execute(
-                "UPDATE guild_config SET game_started=FALSE WHERE guild_id=$1",
-                interaction.guild_id)
-        await interaction.response.send_message("War paused.", ephemeral=True)
+                "UPDATE guild_config SET game_started=FALSE WHERE guild_id=$1", i.guild_id)
+        await i.response.send_message("⏸ War paused.", ephemeral=True)
 
-    @app_commands.command(name="game_reset",
-                          description="[Admin] Wipe all war data on the active planet.")
-    async def game_reset(self, interaction: discord.Interaction):
-        if not await self._is_admin(interaction):
-            await interaction.response.send_message("Admins only.", ephemeral=True); return
-        view = _ConfirmView(interaction.user.id)
-        await interaction.response.send_message(
-            "This wipes ALL war data on the active planet. Confirm?",
+    @discord.ui.button(label="🔄 Reset War", style=discord.ButtonStyle.danger, row=0)
+    async def game_reset(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await _is_admin(self.bot, i):
+            await i.response.send_message("Admins only.", ephemeral=True); return
+        view = _ConfirmView(i.user.id)
+        await i.response.send_message(
+            "⚠ This wipes **all** war data on the active planet. Confirm?",
             view=view, ephemeral=True)
         await view.wait()
         if not view.confirmed:
             return
         pool = await get_pool()
         async with pool.acquire() as conn:
-            planet_id = await get_active_planet_id(conn, interaction.guild_id)
-            for tbl in ("squadrons", "enemy_units", "combat_log",
-                        "turn_history", "enemy_gm_moves"):
+            planet_id = await get_active_planet_id(conn, i.guild_id)
+            for tbl in ("squadrons", "enemy_units", "combat_log", "turn_history", "enemy_gm_moves"):
                 await conn.execute(
                     f"DELETE FROM {tbl} WHERE guild_id=$1 AND planet_id=$2",
-                    interaction.guild_id, planet_id)
+                    i.guild_id, planet_id)
             await conn.execute(
                 "UPDATE hexes SET controller='neutral', status='neutral' "
-                "WHERE guild_id=$1 AND planet_id=$2",
-                interaction.guild_id, planet_id)
+                "WHERE guild_id=$1 AND planet_id=$2", i.guild_id, planet_id)
             await conn.execute(
                 "UPDATE guild_config SET game_started=FALSE, last_turn_at=NOW() "
-                "WHERE guild_id=$1", interaction.guild_id)
-        await interaction.edit_original_response(
-            content="War data cleared.", view=None)
+                "WHERE guild_id=$1", i.guild_id)
+        await i.edit_original_response(content="War data cleared.", view=None)
 
-    @app_commands.command(name="game_status", description="View current war status.")
-    async def game_status(self, interaction: discord.Interaction):
-        await ensure_guild(interaction.guild_id)
+    @discord.ui.button(label="📊 Status", style=discord.ButtonStyle.secondary, row=0)
+    async def game_status(self, i: discord.Interaction, b: discord.ui.Button):
+        await ensure_guild(i.guild_id)
         pool = await get_pool()
         async with pool.acquire() as conn:
-            theme     = await get_theme(conn, interaction.guild_id)
+            theme     = await get_theme(conn, i.guild_id)
             cfg       = await conn.fetchrow(
-                "SELECT * FROM guild_config WHERE guild_id=$1", interaction.guild_id)
-            planet_id = await get_active_planet_id(conn, interaction.guild_id)
+                "SELECT * FROM guild_config WHERE guild_id=$1", i.guild_id)
+            planet_id = await get_active_planet_id(conn, i.guild_id)
             planet    = await conn.fetchrow(
                 "SELECT name, contractor, enemy_type FROM planets WHERE guild_id=$1 AND id=$2",
-                interaction.guild_id, planet_id)
+                i.guild_id, planet_id)
             p_count   = await conn.fetchval(
                 "SELECT COUNT(DISTINCT owner_id) FROM squadrons "
                 "WHERE guild_id=$1 AND planet_id=$2 AND is_active=TRUE",
-                interaction.guild_id, planet_id) or 0
+                i.guild_id, planet_id) or 0
             e_count   = await conn.fetchval(
                 "SELECT COUNT(*) FROM enemy_units "
                 "WHERE guild_id=$1 AND planet_id=$2 AND is_active=TRUE",
-                interaction.guild_id, planet_id) or 0
+                i.guild_id, planet_id) or 0
             turns     = await conn.fetchval(
-                "SELECT COUNT(*) FROM turn_history "
-                "WHERE guild_id=$1 AND planet_id=$2",
-                interaction.guild_id, planet_id) or 0
-
+                "SELECT COUNT(*) FROM turn_history WHERE guild_id=$1 AND planet_id=$2",
+                i.guild_id, planet_id) or 0
         embed = discord.Embed(
             title=f"{theme.get('bot_name','WARBOT')} — War Status",
             color=theme.get("color", 0xAA2222))
-        embed.add_field(name="State",   value="Active" if cfg["game_started"] else "Paused", inline=True)
-        embed.add_field(name="Turn",    value=str(turns), inline=True)
-        embed.add_field(name="Interval",value=f"{cfg['turn_interval_hours']}h", inline=True)
-        embed.add_field(name="Planet",  value=planet["name"]       if planet else "—", inline=True)
-        embed.add_field(name="Contractor",value=planet["contractor"] if planet else "—", inline=True)
-        embed.add_field(name="Enemy",   value=planet["enemy_type"] if planet else "—", inline=True)
+        embed.add_field(name="State",    value="Active" if cfg["game_started"] else "Paused", inline=True)
+        embed.add_field(name="Turn",     value=str(turns), inline=True)
+        embed.add_field(name="Interval", value=f"{cfg['turn_interval_hours']}h", inline=True)
+        embed.add_field(name="Planet",   value=planet["name"]       if planet else "—", inline=True)
+        embed.add_field(name="Contractor", value=planet["contractor"] if planet else "—", inline=True)
+        embed.add_field(name="Enemy",    value=planet["enemy_type"] if planet else "—", inline=True)
         embed.add_field(name=theme.get("player_faction","PMC"),  value=f"{p_count} units", inline=True)
         embed.add_field(name=theme.get("enemy_faction","Enemy"), value=f"{e_count} units", inline=True)
-        embed.add_field(name="Admin Role",
-                        value=f"<@&{cfg['admin_role_id']}>" if cfg["admin_role_id"] else "Not set",
-                        inline=True)
         embed.set_footer(text=f"Last advance: {cfg['last_turn_at'].strftime('%Y-%m-%d %H:%M UTC')}")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await i.response.send_message(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="set_turn_interval",
-                          description="[Admin] Hours between AI advance turns (1-168).")
-    async def set_turn_interval(self, interaction: discord.Interaction, hours: int):
-        if not await self._is_admin(interaction):
-            await interaction.response.send_message("Admins only.", ephemeral=True); return
-        if not (1 <= hours <= 168):
-            await interaction.response.send_message("Must be 1-168.", ephemeral=True); return
+    @discord.ui.button(label="⏱ Turn Interval", style=discord.ButtonStyle.secondary, row=0)
+    async def set_turn_interval(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await _is_admin(self.bot, i):
+            await i.response.send_message("Admins only.", ephemeral=True); return
+        await i.response.send_modal(_TurnIntervalModal())
+
+    # ── Row 1: Planets ────────────────────────────────────────────────────────
+
+    @discord.ui.button(label="🪐 List Planets", style=discord.ButtonStyle.secondary, row=1)
+    async def planet_list(self, i: discord.Interaction, b: discord.ui.Button):
+        await ensure_guild(i.guild_id)
         pool = await get_pool()
         async with pool.acquire() as conn:
-            await conn.execute(
-                "UPDATE guild_config SET turn_interval_hours=$1 WHERE guild_id=$2",
-                hours, interaction.guild_id)
-        await interaction.response.send_message(f"Turn interval: **{hours}h**.", ephemeral=True)
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # PLANET MANAGEMENT
-    # ══════════════════════════════════════════════════════════════════════════
-
-    @app_commands.command(name="planet_list", description="List all planets.")
-    async def planet_list(self, interaction: discord.Interaction):
-        await ensure_guild(interaction.guild_id)
-        pool = await get_pool()
-        async with pool.acquire() as conn:
-            theme     = await get_theme(conn, interaction.guild_id)
+            theme     = await get_theme(conn, i.guild_id)
             planets   = await conn.fetch(
-                "SELECT * FROM planets WHERE guild_id=$1 ORDER BY sort_order, id",
-                interaction.guild_id)
-            active_id = await get_active_planet_id(conn, interaction.guild_id)
+                "SELECT * FROM planets WHERE guild_id=$1 ORDER BY sort_order, id", i.guild_id)
+            active_id = await get_active_planet_id(conn, i.guild_id)
         if not planets:
-            await interaction.response.send_message("No planets configured.", ephemeral=True)
-            return
+            await i.response.send_message("No planets configured.", ephemeral=True); return
         lines = [
             f"{'>' if p['id']==active_id else ' '} **{p['name']}** (ID {p['id']})\n"
             f"   Contractor: {p['contractor']}  |  Enemy: {p['enemy_type']}"
@@ -215,353 +228,570 @@ class AdminCog(commands.Cog):
             color=theme.get("color", 0xAA2222),
             description="\n\n".join(lines))
         embed.set_footer(text="> = Active Theatre")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await i.response.send_message(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="planet_set_active",
-                          description="[Admin] Switch the active planet.")
-    @app_commands.describe(planet_name="Name of the planet to activate")
-    async def planet_set_active(self, interaction: discord.Interaction, planet_name: str):
-        if not await self._is_admin(interaction):
-            await interaction.response.send_message("Admins only.", ephemeral=True); return
-        await ensure_guild(interaction.guild_id)
+    @discord.ui.button(label="➕ Add Planet", style=discord.ButtonStyle.secondary, row=1)
+    async def planet_add(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await _is_admin(self.bot, i):
+            await i.response.send_message("Admins only.", ephemeral=True); return
+        await i.response.send_modal(_PlanetAddModal())
+
+    @discord.ui.button(label="🔀 Set Active Planet", style=discord.ButtonStyle.primary, row=1)
+    async def planet_set_active(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await _is_admin(self.bot, i):
+            await i.response.send_message("Admins only.", ephemeral=True); return
+        await i.response.send_modal(_PlanetSetActiveModal(self.bot))
+
+    @discord.ui.button(label="✏ Edit Planet", style=discord.ButtonStyle.secondary, row=1)
+    async def planet_edit(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await _is_admin(self.bot, i):
+            await i.response.send_message("Admins only.", ephemeral=True); return
+        await i.response.send_message(
+            "Choose a field to edit:", view=_PlanetEditFieldView(i.guild_id), ephemeral=True)
+
+    @discord.ui.button(label="🗑 Remove Planet", style=discord.ButtonStyle.danger, row=1)
+    async def planet_remove(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await _is_admin(self.bot, i):
+            await i.response.send_message("Admins only.", ephemeral=True); return
+        await i.response.send_modal(_PlanetRemoveModal())
+
+    # ── Row 2: Theme ──────────────────────────────────────────────────────────
+
+    @discord.ui.button(label="🎨 View Theme", style=discord.ButtonStyle.secondary, row=2)
+    async def theme_view(self, i: discord.Interaction, b: discord.ui.Button):
+        await ensure_guild(i.guild_id)
         pool = await get_pool()
         async with pool.acquire() as conn:
-            planet = await conn.fetchrow(
-                "SELECT id, name FROM planets WHERE guild_id=$1 AND LOWER(name)=LOWER($2)",
-                interaction.guild_id, planet_name)
-            if not planet:
-                await interaction.response.send_message(
-                    f"Planet `{planet_name}` not found.", ephemeral=True); return
-            await ensure_hexes(interaction.guild_id, conn, planet["id"])
-            await conn.execute(
-                "UPDATE guild_config SET active_planet_id=$1 WHERE guild_id=$2",
-                planet["id"], interaction.guild_id)
-        await interaction.response.send_message(
-            f"Active theatre: **{planet['name']}**.", ephemeral=True)
-        try:
-            from cogs.map_cog import auto_update_map, auto_update_overview
-            await auto_update_map(self.bot, interaction.guild_id)
-            await auto_update_overview(self.bot, interaction.guild_id)
-        except Exception:
-            pass
+            theme = await get_theme(conn, i.guild_id)
+        embed = discord.Embed(
+            title="Current Theme",
+            color=theme.get("color", 0xAA2222),
+            description="\n".join(f"**{k}:** {v}" for k, v in theme.items()))
+        await i.response.send_message(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="planet_add",
-                          description="[Admin] Add a new planet.")
-    @app_commands.describe(planet_name="Planet name", contractor="Contractor", enemy_type="Enemy type")
-    async def planet_add(self, interaction: discord.Interaction,
-                         planet_name: str, contractor: str, enemy_type: str):
-        if not await self._is_admin(interaction):
-            await interaction.response.send_message("Admins only.", ephemeral=True); return
-        if len(planet_name) > 40:
-            await interaction.response.send_message("Name too long (max 40).", ephemeral=True); return
-        await ensure_guild(interaction.guild_id)
+    @discord.ui.button(label="✏ Set Theme", style=discord.ButtonStyle.secondary, row=2)
+    async def theme_set(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await _is_admin(self.bot, i):
+            await i.response.send_message("Admins only.", ephemeral=True); return
+        await i.response.send_message(
+            "Choose a theme field:", view=_ThemeSetFieldView(i.guild_id), ephemeral=True)
+
+    @discord.ui.button(label="🖌 Set Color", style=discord.ButtonStyle.secondary, row=2)
+    async def theme_color(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await _is_admin(self.bot, i):
+            await i.response.send_message("Admins only.", ephemeral=True); return
+        await i.response.send_modal(_ThemeColorModal())
+
+    @discord.ui.button(label="🗺 Set Terrain", style=discord.ButtonStyle.secondary, row=2)
+    async def map_set_terrain(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await _is_admin(self.bot, i):
+            await i.response.send_message("Admins only.", ephemeral=True); return
+        await i.response.send_message(
+            "Choose terrain type:", view=_TerrainTypeView(i.guild_id), ephemeral=True)
+
+    @discord.ui.button(label="🔃 Reset Terrain", style=discord.ButtonStyle.danger, row=2)
+    async def map_reset_terrain(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await _is_admin(self.bot, i):
+            await i.response.send_message("Admins only.", ephemeral=True); return
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            planet_id = await get_active_planet_id(conn, i.guild_id)
+            await conn.execute(
+                "DELETE FROM hex_terrain WHERE guild_id=$1 AND planet_id=$2",
+                i.guild_id, planet_id)
+        await i.response.send_message("Terrain reset to flat.", ephemeral=True)
+
+    # ── Row 3: Channels ───────────────────────────────────────────────────────
+
+    @discord.ui.button(label="📡 Map Channel", style=discord.ButtonStyle.secondary, row=3)
+    async def set_map_channel(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await _is_admin(self.bot, i):
+            await i.response.send_message("Admins only.", ephemeral=True); return
+        await i.response.send_modal(_ChannelModal("map_channel_id", "Map Channel ID"))
+
+    @discord.ui.button(label="🌌 Overview Channel", style=discord.ButtonStyle.secondary, row=3)
+    async def set_overview_channel(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await _is_admin(self.bot, i):
+            await i.response.send_message("Admins only.", ephemeral=True); return
+        await i.response.send_modal(_ChannelModal("overview_channel_id", "Overview Channel ID"))
+
+    @discord.ui.button(label="📋 Menu Channel", style=discord.ButtonStyle.secondary, row=3)
+    async def set_menu_channel(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await _is_admin(self.bot, i):
+            await i.response.send_message("Admins only.", ephemeral=True); return
+        await i.response.send_modal(_MenuChannelModal())
+
+    @discord.ui.button(label="⚔ Enlist Channel", style=discord.ButtonStyle.secondary, row=3)
+    async def set_enlist_channel(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await _is_admin(self.bot, i):
+            await i.response.send_message("Admins only.", ephemeral=True); return
+        await i.response.send_modal(_EnlistChannelModal())
+
+    @discord.ui.button(label="📢 Report Channel", style=discord.ButtonStyle.secondary, row=3)
+    async def set_report_channel(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await _is_admin(self.bot, i):
+            await i.response.send_message("Admins only.", ephemeral=True); return
+        await i.response.send_modal(_ChannelModal("report_channel_id", "Report Channel ID"))
+
+    # ── Row 4: Roles ──────────────────────────────────────────────────────────
+
+    @discord.ui.button(label="🛡 Admin Role", style=discord.ButtonStyle.secondary, row=4)
+    async def set_admin_role(self, i: discord.Interaction, b: discord.ui.Button):
+        if not _is_owner_only(i):
+            await i.response.send_message("Server owner only.", ephemeral=True); return
+        await i.response.send_modal(_RoleModal("admin_role_id", "Admin Role ID"))
+
+    @discord.ui.button(label="🪖 Player Role", style=discord.ButtonStyle.secondary, row=4)
+    async def set_player_role(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await _is_admin(self.bot, i):
+            await i.response.send_message("Admins only.", ephemeral=True); return
+        await i.response.send_modal(_RoleModal("player_role_id", "Player Role ID"))
+
+    @discord.ui.button(label="🎮 GM Role", style=discord.ButtonStyle.secondary, row=4)
+    async def set_gm_role(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await _is_admin(self.bot, i):
+            await i.response.send_message("Admins only.", ephemeral=True); return
+        await i.response.send_modal(_RoleModal("gamemaster_role_id", "GM Role ID"))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GM PANEL
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _gm_panel_embed(theme: dict) -> discord.Embed:
+    return discord.Embed(
+        title=f"🎮 {theme.get('bot_name', 'WARBOT')} — GM Panel",
+        color=theme.get("color", 0xAA2222),
+        description=(
+            "**Enemy Management**\n"
+            "Spawn enemy units at any hex, queue moves for next turn,\n"
+            "or list all active enemy units on the current planet.\n\n"
+            "All actions are ephemeral — only you can see this panel."
+        ),
+    ).set_footer(text="Game Master controls")
+
+
+class GmPanelView(discord.ui.View):
+    """
+    GM panel — enemy unit management.
+    Row 0: Spawn Enemy | Move Enemy | List Enemies
+    """
+    def __init__(self, bot, guild_id: int):
+        super().__init__(timeout=300)
+        self.bot      = bot
+        self.guild_id = guild_id
+
+    async def _check(self, i: discord.Interaction) -> bool:
+        if await _is_admin(self.bot, i):
+            return True
+        if await _is_gm(i):
+            return True
+        await i.response.send_message("GMs only.", ephemeral=True)
+        return False
+
+    @discord.ui.button(label="👾 Spawn Enemy", style=discord.ButtonStyle.danger, row=0)
+    async def spawn_enemy(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await self._check(i): return
+        await i.response.send_modal(_SpawnEnemyModal())
+
+    @discord.ui.button(label="➡ Move Enemy", style=discord.ButtonStyle.primary, row=0)
+    async def move_enemy(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await self._check(i): return
+        await i.response.send_modal(_MoveEnemyModal())
+
+    @discord.ui.button(label="📋 List Enemies", style=discord.ButtonStyle.secondary, row=0)
+    async def list_enemies(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await self._check(i): return
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            theme     = await get_theme(conn, i.guild_id)
+            planet_id = await get_active_planet_id(conn, i.guild_id)
+            rows      = await conn.fetch(
+                "SELECT id, unit_type, hex_address, attack, defense, is_active "
+                "FROM enemy_units WHERE guild_id=$1 AND planet_id=$2 AND is_active=TRUE "
+                "ORDER BY id",
+                i.guild_id, planet_id)
+        if not rows:
+            await i.response.send_message("No active enemy units.", ephemeral=True); return
+        lines = [
+            f"**ID {r['id']}** — {r['unit_type']} @ `{r['hex_address']}` "
+            f"(ATK:{r['attack']} DEF:{r['defense']})"
+            for r in rows
+        ]
+        embed = discord.Embed(
+            title=f"Enemy Units ({len(rows)})",
+            color=theme.get("color", 0xAA2222),
+            description="\n".join(lines))
+        await i.response.send_message(embed=embed, ephemeral=True)
+
+    @discord.ui.button(label="☠ Remove Enemy", style=discord.ButtonStyle.danger, row=0)
+    async def remove_enemy(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await self._check(i): return
+        await i.response.send_modal(_RemoveEnemyModal())
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MODALS
+# ══════════════════════════════════════════════════════════════════════════════
+
+class _TurnIntervalModal(discord.ui.Modal, title="Set Turn Interval"):
+    hours = discord.ui.TextInput(
+        label="Hours between turns (1–168)",
+        placeholder="e.g. 24",
+        max_length=3, required=True)
+
+    async def on_submit(self, i: discord.Interaction):
+        try:
+            h = int(str(self.hours).strip())
+            assert 1 <= h <= 168
+        except Exception:
+            await i.response.send_message("Must be a number between 1 and 168.", ephemeral=True); return
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE guild_config SET turn_interval_hours=$1 WHERE guild_id=$2",
+                h, i.guild_id)
+        await i.response.send_message(f"Turn interval set to **{h}h**.", ephemeral=True)
+
+
+class _PlanetAddModal(discord.ui.Modal, title="Add Planet"):
+    planet_name = discord.ui.TextInput(label="Planet Name", max_length=40)
+    contractor  = discord.ui.TextInput(label="Contractor", max_length=60)
+    enemy_type  = discord.ui.TextInput(label="Enemy Type", max_length=60)
+
+    async def on_submit(self, i: discord.Interaction):
+        name = str(self.planet_name).strip()
+        await ensure_guild(i.guild_id)
         pool = await get_pool()
         async with pool.acquire() as conn:
             existing = await conn.fetchval(
-                "SELECT COUNT(*) FROM planets WHERE guild_id=$1", interaction.guild_id)
+                "SELECT COUNT(*) FROM planets WHERE guild_id=$1", i.guild_id)
             try:
                 row = await conn.fetchrow("""
                     INSERT INTO planets (guild_id, name, contractor, enemy_type, sort_order)
                     VALUES ($1,$2,$3,$4,$5) RETURNING id
-                """, interaction.guild_id, planet_name, contractor, enemy_type, int(existing)+1)
+                """, i.guild_id, name,
+                    str(self.contractor).strip(),
+                    str(self.enemy_type).strip(),
+                    int(existing) + 1)
             except Exception:
-                await interaction.response.send_message(
-                    f"Planet `{planet_name}` already exists.", ephemeral=True); return
-            await ensure_hexes(interaction.guild_id, conn, row["id"])
-        await interaction.response.send_message(
-            f"Planet **{planet_name}** added (ID {row['id']}).", ephemeral=True)
+                await i.response.send_message(
+                    f"Planet `{name}` already exists.", ephemeral=True); return
+            await ensure_hexes(i.guild_id, conn, row["id"])
+        await i.response.send_message(
+            f"Planet **{name}** added (ID {row['id']}).", ephemeral=True)
 
-    @app_commands.command(name="planet_remove",
-                          description="[Admin] Remove a planet (not the active one).")
-    async def planet_remove(self, interaction: discord.Interaction, planet_name: str):
-        if not await self._is_admin(interaction):
-            await interaction.response.send_message("Admins only.", ephemeral=True); return
+
+class _PlanetSetActiveModal(discord.ui.Modal, title="Set Active Planet"):
+    planet_name = discord.ui.TextInput(label="Planet Name", max_length=40)
+
+    def __init__(self, bot):
+        super().__init__()
+        self.bot = bot
+
+    async def on_submit(self, i: discord.Interaction):
+        name = str(self.planet_name).strip()
+        await ensure_guild(i.guild_id)
         pool = await get_pool()
         async with pool.acquire() as conn:
-            active_id = await get_active_planet_id(conn, interaction.guild_id)
+            planet = await conn.fetchrow(
+                "SELECT id, name FROM planets WHERE guild_id=$1 AND LOWER(name)=LOWER($2)",
+                i.guild_id, name)
+            if not planet:
+                await i.response.send_message(f"Planet `{name}` not found.", ephemeral=True); return
+            await ensure_hexes(i.guild_id, conn, planet["id"])
+            await conn.execute(
+                "UPDATE guild_config SET active_planet_id=$1 WHERE guild_id=$2",
+                planet["id"], i.guild_id)
+        await i.response.send_message(f"Active theatre: **{planet['name']}**.", ephemeral=True)
+        try:
+            from cogs.map_cog import auto_update_map, auto_update_overview
+            await auto_update_map(self.bot, i.guild_id)
+            await auto_update_overview(self.bot, i.guild_id)
+        except Exception:
+            pass
+
+
+class _PlanetRemoveModal(discord.ui.Modal, title="Remove Planet"):
+    planet_name = discord.ui.TextInput(
+        label="Planet Name to Remove", max_length=40)
+
+    async def on_submit(self, i: discord.Interaction):
+        name = str(self.planet_name).strip()
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            active_id = await get_active_planet_id(conn, i.guild_id)
             planet    = await conn.fetchrow(
                 "SELECT id FROM planets WHERE guild_id=$1 AND LOWER(name)=LOWER($2)",
-                interaction.guild_id, planet_name)
+                i.guild_id, name)
             if not planet:
-                await interaction.response.send_message(
-                    f"Planet `{planet_name}` not found.", ephemeral=True); return
+                await i.response.send_message(f"Planet `{name}` not found.", ephemeral=True); return
             if planet["id"] == active_id:
-                await interaction.response.send_message(
+                await i.response.send_message(
                     "Cannot remove the active planet.", ephemeral=True); return
             pid = planet["id"]
             for tbl in ("hexes","hex_terrain","squadrons","enemy_units",
                         "combat_log","turn_history","enemy_gm_moves"):
                 await conn.execute(
-                    f"DELETE FROM {tbl} WHERE guild_id=$1 AND planet_id=$2",
-                    interaction.guild_id, pid)
+                    f"DELETE FROM {tbl} WHERE guild_id=$1 AND planet_id=$2", i.guild_id, pid)
             await conn.execute(
-                "DELETE FROM planets WHERE guild_id=$1 AND id=$2",
-                interaction.guild_id, pid)
-        await interaction.response.send_message(
-            f"Planet **{planet_name}** removed.", ephemeral=True)
+                "DELETE FROM planets WHERE guild_id=$1 AND id=$2", i.guild_id, pid)
+        await i.response.send_message(f"Planet **{name}** removed.", ephemeral=True)
 
-    @app_commands.command(name="planet_edit",
-                          description="[Admin] Edit a planet's details.")
-    @app_commands.choices(field=[
-        app_commands.Choice(name="Contractor",  value="contractor"),
-        app_commands.Choice(name="Enemy Type",  value="enemy_type"),
-        app_commands.Choice(name="Description", value="description"),
-        app_commands.Choice(name="Planet Name", value="name"),
-    ])
-    async def planet_edit(self, interaction: discord.Interaction,
-                          planet_name: str, field: app_commands.Choice[str], value: str):
-        if not await self._is_admin(interaction):
-            await interaction.response.send_message("Admins only.", ephemeral=True); return
+
+# Planet Edit — two-step: pick field then enter value
+PLANET_EDIT_FIELDS = {
+    "name":        "Planet Name",
+    "contractor":  "Contractor",
+    "enemy_type":  "Enemy Type",
+    "description": "Description",
+}
+
+
+class _PlanetEditFieldView(discord.ui.View):
+    def __init__(self, guild_id: int):
+        super().__init__(timeout=60)
+        self.guild_id = guild_id
+        select = discord.ui.Select(
+            placeholder="Choose field to edit...",
+            options=[
+                discord.SelectOption(label=label, value=key)
+                for key, label in PLANET_EDIT_FIELDS.items()
+            ])
+        select.callback = self._on_select
+        self.add_item(select)
+
+    async def _on_select(self, i: discord.Interaction):
+        field = i.data["values"][0]
+        await i.response.send_modal(_PlanetEditModal(field, PLANET_EDIT_FIELDS[field]))
+
+
+class _PlanetEditModal(discord.ui.Modal, title="Edit Planet"):
+    planet_name = discord.ui.TextInput(label="Planet Name", max_length=40)
+    new_value   = discord.ui.TextInput(label="New Value",   max_length=80)
+
+    def __init__(self, field: str, field_label: str):
+        super().__init__(title=f"Edit Planet — {field_label}")
+        self.field = field
+
+    async def on_submit(self, i: discord.Interaction):
+        name = str(self.planet_name).strip()
+        val  = str(self.new_value).strip()
         pool = await get_pool()
         async with pool.acquire() as conn:
             planet = await conn.fetchrow(
                 "SELECT id FROM planets WHERE guild_id=$1 AND LOWER(name)=LOWER($2)",
-                interaction.guild_id, planet_name)
+                i.guild_id, name)
             if not planet:
-                await interaction.response.send_message(
-                    f"Planet `{planet_name}` not found.", ephemeral=True); return
+                await i.response.send_message(f"Planet `{name}` not found.", ephemeral=True); return
             await conn.execute(
-                f"UPDATE planets SET {field.value}=$1 WHERE guild_id=$2 AND id=$3",
-                value, interaction.guild_id, planet["id"])
-        await interaction.response.send_message(
-            f"**{planet_name}** — {field.name} updated.", ephemeral=True)
+                f"UPDATE planets SET {self.field}=$1 WHERE guild_id=$2 AND id=$3",
+                val, i.guild_id, planet["id"])
+        await i.response.send_message(
+            f"**{name}** — {PLANET_EDIT_FIELDS[self.field]} updated to `{val}`.", ephemeral=True)
 
-    # ══════════════════════════════════════════════════════════════════════════
-    # THEME
-    # ══════════════════════════════════════════════════════════════════════════
 
-    @app_commands.command(name="theme_view", description="View current theme settings.")
-    async def theme_view(self, interaction: discord.Interaction):
-        await ensure_guild(interaction.guild_id)
+# Theme
+THEME_FIELDS = {
+    "theme_bot_name":       "Bot Name",
+    "theme_player_faction": "Player Faction",
+    "theme_enemy_faction":  "Enemy Faction",
+    "theme_player_unit":    "Player Unit Name",
+    "theme_enemy_unit":     "Enemy Unit Name",
+    "theme_flavor_text":    "Flavor Text",
+}
+
+
+class _ThemeSetFieldView(discord.ui.View):
+    def __init__(self, guild_id: int):
+        super().__init__(timeout=60)
+        self.guild_id = guild_id
+        select = discord.ui.Select(
+            placeholder="Choose theme field...",
+            options=[
+                discord.SelectOption(label=label, value=key)
+                for key, label in THEME_FIELDS.items()
+            ])
+        select.callback = self._on_select
+        self.add_item(select)
+
+    async def _on_select(self, i: discord.Interaction):
+        field = i.data["values"][0]
+        await i.response.send_modal(_ThemeSetModal(field, THEME_FIELDS[field]))
+
+
+class _ThemeSetModal(discord.ui.Modal, title="Set Theme"):
+    value = discord.ui.TextInput(label="New Value", max_length=80)
+
+    def __init__(self, field: str, field_label: str):
+        super().__init__(title=f"Set — {field_label}")
+        self.field = field
+
+    async def on_submit(self, i: discord.Interaction):
+        val = str(self.value).strip()
+        await ensure_guild(i.guild_id)
         pool = await get_pool()
         async with pool.acquire() as conn:
-            theme = await get_theme(conn, interaction.guild_id)
-        embed = discord.Embed(
-            title="Current Theme",
-            color=theme.get("color", 0xAA2222),
-            description="\n".join(f"**{k}:** {v}" for k, v in theme.items()))
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    @app_commands.command(name="theme_set", description="[Admin] Change a theme value.")
-    @app_commands.choices(field=[
-        app_commands.Choice(name="Bot Name",         value="theme_bot_name"),
-        app_commands.Choice(name="Player Faction",   value="theme_player_faction"),
-        app_commands.Choice(name="Enemy Faction",    value="theme_enemy_faction"),
-        app_commands.Choice(name="Player Unit Name", value="theme_player_unit"),
-        app_commands.Choice(name="Enemy Unit Name",  value="theme_enemy_unit"),
-        app_commands.Choice(name="Flavor Text",      value="theme_flavor_text"),
-    ])
-    async def theme_set(self, interaction: discord.Interaction,
-                        field: app_commands.Choice[str], value: str):
-        if not await self._is_admin(interaction):
-            await interaction.response.send_message("Admins only.", ephemeral=True); return
-        if len(value) > 80:
-            await interaction.response.send_message("Max 80 chars.", ephemeral=True); return
-        await ensure_guild(interaction.guild_id)
-        pool = await get_pool()
-        async with pool.acquire() as conn:
             await conn.execute(
-                f"UPDATE guild_config SET {field.value}=$1 WHERE guild_id=$2",
-                value, interaction.guild_id)
-        await interaction.response.send_message(
-            f"**{field.name}** set to `{value}`.", ephemeral=True)
+                f"UPDATE guild_config SET {self.field}=$1 WHERE guild_id=$2",
+                val, i.guild_id)
+        await i.response.send_message(
+            f"**{THEME_FIELDS[self.field]}** set to `{val}`.", ephemeral=True)
 
-    @app_commands.command(name="theme_color",
-                          description="[Admin] Set embed accent color (hex, e.g. AA2222).")
-    async def theme_color(self, interaction: discord.Interaction, hex_color: str):
-        if not await self._is_admin(interaction):
-            await interaction.response.send_message("Admins only.", ephemeral=True); return
+
+class _ThemeColorModal(discord.ui.Modal, title="Set Accent Color"):
+    hex_color = discord.ui.TextInput(
+        label="Hex color (e.g. AA2222)",
+        placeholder="AA2222",
+        max_length=7, required=True)
+
+    async def on_submit(self, i: discord.Interaction):
+        raw = str(self.hex_color).strip().lstrip("#")
         try:
-            color_int = int(hex_color.lstrip("#"), 16)
-            if not (0 <= color_int <= 0xFFFFFF):
-                raise ValueError
-        except ValueError:
-            await interaction.response.send_message("Invalid hex color.", ephemeral=True); return
-        await ensure_guild(interaction.guild_id)
+            color_int = int(raw, 16)
+            assert 0 <= color_int <= 0xFFFFFF
+        except Exception:
+            await i.response.send_message("Invalid hex color.", ephemeral=True); return
+        await ensure_guild(i.guild_id)
         pool = await get_pool()
         async with pool.acquire() as conn:
             await conn.execute(
                 "UPDATE guild_config SET theme_color=$1 WHERE guild_id=$2",
-                color_int, interaction.guild_id)
-        await interaction.response.send_message(
-            f"Accent color: `#{hex_color.upper()}`.", ephemeral=True)
+                color_int, i.guild_id)
+        await i.response.send_message(f"Accent color: `#{raw.upper()}`.", ephemeral=True)
 
-    # ══════════════════════════════════════════════════════════════════════════
-    # MAP TERRAIN
-    # ══════════════════════════════════════════════════════════════════════════
 
-    @app_commands.command(name="map_set_terrain",
-                          description="[Admin] Set terrain for a hex on the active planet.")
-    @app_commands.describe(hex_address="Global hex coord e.g. 3,-2", terrain="Terrain type")
-    @app_commands.choices(terrain=[
-        app_commands.Choice(name=t.title(), value=t) for t in TERRAIN_TYPES])
-    async def map_set_terrain(self, interaction: discord.Interaction,
-                              hex_address: str, terrain: app_commands.Choice[str]):
-        if not await self._is_admin(interaction):
-            await interaction.response.send_message("Admins only.", ephemeral=True); return
-        addr = hex_address.strip()
+# Terrain — two-step: pick terrain type then enter hex
+class _TerrainTypeView(discord.ui.View):
+    def __init__(self, guild_id: int):
+        super().__init__(timeout=60)
+        self.guild_id = guild_id
+        select = discord.ui.Select(
+            placeholder="Choose terrain type...",
+            options=[
+                discord.SelectOption(label=t.title(), value=t)
+                for t in TERRAIN_TYPES
+            ])
+        select.callback = self._on_select
+        self.add_item(select)
+
+    async def _on_select(self, i: discord.Interaction):
+        terrain = i.data["values"][0]
+        await i.response.send_modal(_TerrainHexModal(terrain))
+
+
+class _TerrainHexModal(discord.ui.Modal, title="Set Terrain"):
+    hex_address = discord.ui.TextInput(
+        label="Hex address (e.g. 3,-2)",
+        placeholder="3,-2",
+        max_length=12, required=True)
+
+    def __init__(self, terrain: str):
+        super().__init__(title=f"Set Terrain — {terrain.title()}")
+        self.terrain = terrain
+
+    async def on_submit(self, i: discord.Interaction):
+        addr = str(self.hex_address).strip()
         if not is_valid(addr):
-            await interaction.response.send_message(
+            await i.response.send_message(
                 f"Invalid hex `{addr}`. Use format `gq,gr`.", ephemeral=True); return
         pool = await get_pool()
         async with pool.acquire() as conn:
-            planet_id = await get_active_planet_id(conn, interaction.guild_id)
+            planet_id = await get_active_planet_id(conn, i.guild_id)
             await conn.execute("""
                 INSERT INTO hex_terrain (guild_id, planet_id, address, terrain)
                 VALUES ($1,$2,$3,$4)
                 ON CONFLICT (guild_id, planet_id, address) DO UPDATE SET terrain=EXCLUDED.terrain
-            """, interaction.guild_id, planet_id, addr, terrain.value)
-        await interaction.response.send_message(
-            f"`{addr}` set to **{terrain.name}**.", ephemeral=True)
+            """, i.guild_id, planet_id, addr, self.terrain)
+        await i.response.send_message(
+            f"`{addr}` set to **{self.terrain.title()}**.", ephemeral=True)
 
-    @app_commands.command(name="map_reset_terrain",
-                          description="[Admin] Reset all terrain to flat on the active planet.")
-    async def map_reset_terrain(self, interaction: discord.Interaction):
-        if not await self._is_admin(interaction):
-            await interaction.response.send_message("Admins only.", ephemeral=True); return
-        pool = await get_pool()
-        async with pool.acquire() as conn:
-            planet_id = await get_active_planet_id(conn, interaction.guild_id)
-            await conn.execute(
-                "DELETE FROM hex_terrain WHERE guild_id=$1 AND planet_id=$2",
-                interaction.guild_id, planet_id)
-        await interaction.response.send_message("Terrain reset to flat.", ephemeral=True)
 
-    # ══════════════════════════════════════════════════════════════════════════
-    # ROLES & CHANNELS
-    # ══════════════════════════════════════════════════════════════════════════
+# Channels — generic modal that resolves channel by ID or mention
+class _ChannelModal(discord.ui.Modal, title="Set Channel"):
+    channel_input = discord.ui.TextInput(
+        label="Channel ID or #mention",
+        placeholder="Paste the channel ID",
+        max_length=30, required=True)
 
-    @app_commands.command(name="set_admin_role",
-                          description="[Owner] Set the admin role for this bot.")
-    async def set_admin_role(self, interaction: discord.Interaction, role: discord.Role):
-        if not self._is_owner_only(interaction):
-            await interaction.response.send_message("Server owner only.", ephemeral=True); return
-        await ensure_guild(interaction.guild_id)
-        pool = await get_pool()
-        async with pool.acquire() as conn:
-            await conn.execute(
-                "UPDATE guild_config SET admin_role_id=$1 WHERE guild_id=$2",
-                role.id, interaction.guild_id)
-        await interaction.response.send_message(
-            f"Admin role: {role.mention}.", ephemeral=True)
+    def __init__(self, db_column: str, label: str):
+        super().__init__(title=f"Set {label}")
+        self.db_column = db_column
 
-    @app_commands.command(name="set_player_role",
-                          description="[Admin] Role assigned on enlistment.")
-    async def set_player_role(self, interaction: discord.Interaction, role: discord.Role):
-        if not await self._is_admin(interaction):
-            await interaction.response.send_message("Admins only.", ephemeral=True); return
-        await ensure_guild(interaction.guild_id)
-        pool = await get_pool()
-        async with pool.acquire() as conn:
-            await conn.execute(
-                "UPDATE guild_config SET player_role_id=$1 WHERE guild_id=$2",
-                role.id, interaction.guild_id)
-        await interaction.response.send_message(f"Player role: {role.mention}.", ephemeral=True)
-
-    @app_commands.command(name="set_gamemaster_role",
-                          description="[Admin] Role that can manually move enemy units.")
-    async def set_gamemaster_role(self, interaction: discord.Interaction, role: discord.Role):
-        if not await self._is_admin(interaction):
-            await interaction.response.send_message("Admins only.", ephemeral=True); return
-        await ensure_guild(interaction.guild_id)
-        pool = await get_pool()
-        async with pool.acquire() as conn:
-            await conn.execute(
-                "UPDATE guild_config SET gamemaster_role_id=$1 WHERE guild_id=$2",
-                role.id, interaction.guild_id)
-        await interaction.response.send_message(f"GM role: {role.mention}.", ephemeral=True)
-
-    @app_commands.command(name="set_report_channel",
-                          description="[Admin] Channel for after-action turn reports.")
-    async def set_report_channel(self, interaction: discord.Interaction,
-                                  channel: discord.TextChannel):
-        if not await self._is_admin(interaction):
-            await interaction.response.send_message("Admins only.", ephemeral=True); return
-        await ensure_guild(interaction.guild_id)
-        pool = await get_pool()
-        async with pool.acquire() as conn:
-            await conn.execute(
-                "UPDATE guild_config SET report_channel_id=$1 WHERE guild_id=$2",
-                channel.id, interaction.guild_id)
-        await interaction.response.send_message(f"Reports: {channel.mention}.", ephemeral=True)
-
-    @app_commands.command(name="set_map_channel",
-                          description="[Admin] Channel for the live tactical map.")
-    async def set_map_channel(self, interaction: discord.Interaction,
-                               channel: discord.TextChannel):
-        if not await self._is_admin(interaction):
-            await interaction.response.send_message("Admins only.", ephemeral=True); return
-        await ensure_guild(interaction.guild_id)
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        pool = await get_pool()
-        async with pool.acquire() as conn:
-            await conn.execute(
-                "UPDATE guild_config SET map_channel_id=$1 WHERE guild_id=$2",
-                channel.id, interaction.guild_id)
+    async def on_submit(self, i: discord.Interaction):
+        raw = str(self.channel_input).strip().lstrip("<#").rstrip(">")
         try:
-            from cogs.map_cog import auto_update_map
-            await auto_update_map(self.bot, interaction.guild_id)
-            await interaction.followup.send(f"Live map: {channel.mention}.", ephemeral=True)
-        except Exception as e:
-            await interaction.followup.send(f"Map post failed: {e}", ephemeral=True)
-
-    @app_commands.command(name="set_overview_channel",
-                          description="[Admin] Channel for the galaxy overview.")
-    async def set_overview_channel(self, interaction: discord.Interaction,
-                                    channel: discord.TextChannel):
-        if not await self._is_admin(interaction):
-            await interaction.response.send_message("Admins only.", ephemeral=True); return
-        await ensure_guild(interaction.guild_id)
-        await interaction.response.defer(ephemeral=True, thinking=True)
+            channel_id = int(raw)
+        except ValueError:
+            await i.response.send_message("Please paste a valid channel ID.", ephemeral=True); return
+        channel = i.guild.get_channel(channel_id)
+        if not channel:
+            await i.response.send_message("Channel not found in this server.", ephemeral=True); return
+        await ensure_guild(i.guild_id)
         pool = await get_pool()
         async with pool.acquire() as conn:
             await conn.execute(
-                "UPDATE guild_config SET overview_channel_id=$1 WHERE guild_id=$2",
-                channel.id, interaction.guild_id)
-        try:
-            from cogs.map_cog import auto_update_overview
-            await auto_update_overview(self.bot, interaction.guild_id)
-            await interaction.followup.send(f"Overview: {channel.mention}.", ephemeral=True)
-        except Exception as e:
-            await interaction.followup.send(f"Overview post failed: {e}", ephemeral=True)
+                f"UPDATE guild_config SET {self.db_column}=$1 WHERE guild_id=$2",
+                channel_id, i.guild_id)
+        await i.response.send_message(f"Set to {channel.mention}.", ephemeral=True)
 
-    @app_commands.command(name="set_menu_channel",
-                          description="[Admin] Post the persistent command panel.")
-    async def set_menu_channel(self, interaction: discord.Interaction,
-                                channel: discord.TextChannel):
-        if not await self._is_admin(interaction):
-            await interaction.response.send_message("Admins only.", ephemeral=True); return
-        await ensure_guild(interaction.guild_id)
+
+class _MenuChannelModal(discord.ui.Modal, title="Set Menu Channel"):
+    channel_input = discord.ui.TextInput(
+        label="Channel ID",
+        placeholder="Paste the channel ID",
+        max_length=30, required=True)
+
+    async def on_submit(self, i: discord.Interaction):
+        raw = str(self.channel_input).strip().lstrip("<#").rstrip(">")
+        try:
+            channel_id = int(raw)
+        except ValueError:
+            await i.response.send_message("Please paste a valid channel ID.", ephemeral=True); return
+        channel = i.guild.get_channel(channel_id)
+        if not channel:
+            await i.response.send_message("Channel not found.", ephemeral=True); return
+        await ensure_guild(i.guild_id)
         pool = await get_pool()
         async with pool.acquire() as conn:
-            theme = await get_theme(conn, interaction.guild_id)
+            theme = await get_theme(conn, i.guild_id)
             from views.menu import build_menu_embed, MainMenuView
-            embed = await build_menu_embed(interaction.guild_id, conn, theme)
-        msg = await channel.send(embed=embed, view=MainMenuView(interaction.guild_id))
+            embed = await build_menu_embed(i.guild_id, conn, theme)
+        msg = await channel.send(embed=embed, view=MainMenuView(i.guild_id))
         async with pool.acquire() as conn:
             await conn.execute(
                 "UPDATE guild_config SET reg_channel_id=$1, reg_message_id=$2 WHERE guild_id=$3",
-                channel.id, msg.id, interaction.guild_id)
-        await interaction.response.send_message(f"Command panel: {channel.mention}.", ephemeral=True)
+                channel.id, msg.id, i.guild_id)
+        await i.response.send_message(f"Command panel posted in {channel.mention}.", ephemeral=True)
 
-    @app_commands.command(name="set_enlist_channel",
-                          description="[Admin] Post the persistent enlistment board.")
-    async def set_enlist_channel(self, interaction: discord.Interaction,
-                                  channel: discord.TextChannel):
-        if not await self._is_admin(interaction):
-            await interaction.response.send_message("Admins only.", ephemeral=True); return
-        await ensure_guild(interaction.guild_id)
+
+class _EnlistChannelModal(discord.ui.Modal, title="Set Enlist Channel"):
+    channel_input = discord.ui.TextInput(
+        label="Channel ID",
+        placeholder="Paste the channel ID",
+        max_length=30, required=True)
+
+    async def on_submit(self, i: discord.Interaction):
+        raw = str(self.channel_input).strip().lstrip("<#").rstrip(">")
+        try:
+            channel_id = int(raw)
+        except ValueError:
+            await i.response.send_message("Please paste a valid channel ID.", ephemeral=True); return
+        channel = i.guild.get_channel(channel_id)
+        if not channel:
+            await i.response.send_message("Channel not found.", ephemeral=True); return
+        await ensure_guild(i.guild_id)
         pool = await get_pool()
         async with pool.acquire() as conn:
-            theme     = await get_theme(conn, interaction.guild_id)
-            planet_id = await get_active_planet_id(conn, interaction.guild_id)
+            theme     = await get_theme(conn, i.guild_id)
+            planet_id = await get_active_planet_id(conn, i.guild_id)
             planet    = await conn.fetchrow(
                 "SELECT name, contractor, enemy_type FROM planets WHERE guild_id=$1 AND id=$2",
-                interaction.guild_id, planet_id)
+                i.guild_id, planet_id)
             count     = await conn.fetchval(
                 "SELECT COUNT(DISTINCT owner_id) FROM squadrons "
                 "WHERE guild_id=$1 AND planet_id=$2 AND is_active=TRUE",
-                interaction.guild_id, planet_id) or 0
+                i.guild_id, planet_id) or 0
             from views.menu import build_enlist_embed, EnlistView
             embed = build_enlist_embed(
                 theme,
@@ -570,77 +800,108 @@ class AdminCog(commands.Cog):
                 planet["enemy_type"] if planet else "---",
                 count,
             )
-        msg = await channel.send(embed=embed, view=EnlistView(interaction.guild_id))
+        msg = await channel.send(embed=embed, view=EnlistView(i.guild_id))
         async with pool.acquire() as conn:
             await conn.execute(
-                "UPDATE guild_config SET enlist_channel_id=$1, enlist_message_id=$2 "
-                "WHERE guild_id=$3",
-                channel.id, msg.id, interaction.guild_id)
-        await interaction.response.send_message(
-            f"Enlistment board: {channel.mention}.", ephemeral=True)
+                "UPDATE guild_config SET enlist_channel_id=$1, enlist_message_id=$2 WHERE guild_id=$3",
+                channel.id, msg.id, i.guild_id)
+        await i.response.send_message(f"Enlistment board posted in {channel.mention}.", ephemeral=True)
 
-    # ══════════════════════════════════════════════════════════════════════════
-    # GM COMMANDS
-    # ══════════════════════════════════════════════════════════════════════════
 
-    @app_commands.command(name="spawn_enemy",
-                          description="[GM] Spawn an enemy unit at a hex.")
-    @app_commands.describe(hex_address="Global hex coord e.g. 6,-3", unit_type="Unit label")
-    async def spawn_enemy(self, interaction: discord.Interaction,
-                          hex_address: str, unit_type: str = "Scout"):
+class _RoleModal(discord.ui.Modal, title="Set Role"):
+    role_input = discord.ui.TextInput(
+        label="Role ID or @mention",
+        placeholder="Paste the role ID",
+        max_length=30, required=True)
+
+    def __init__(self, db_column: str, label: str):
+        super().__init__(title=f"Set {label}")
+        self.db_column = db_column
+
+    async def on_submit(self, i: discord.Interaction):
+        raw = str(self.role_input).strip().lstrip("<@&").rstrip(">")
+        try:
+            role_id = int(raw)
+        except ValueError:
+            await i.response.send_message("Please paste a valid role ID.", ephemeral=True); return
+        role = i.guild.get_role(role_id)
+        if not role:
+            await i.response.send_message("Role not found in this server.", ephemeral=True); return
+        await ensure_guild(i.guild_id)
         pool = await get_pool()
         async with pool.acquire() as conn:
-            cfg = await conn.fetchrow(
-                "SELECT gamemaster_role_id FROM guild_config WHERE guild_id=$1",
-                interaction.guild_id)
-        if not (await self._is_admin(interaction) or
-                (cfg and self._is_gm(interaction, cfg["gamemaster_role_id"]))):
-            await interaction.response.send_message("GMs only.", ephemeral=True); return
-        addr = hex_address.strip()
+            await conn.execute(
+                f"UPDATE guild_config SET {self.db_column}=$1 WHERE guild_id=$2",
+                role_id, i.guild_id)
+        await i.response.send_message(f"Set to {role.mention}.", ephemeral=True)
+
+
+# GM Modals
+class _SpawnEnemyModal(discord.ui.Modal, title="Spawn Enemy Unit"):
+    unit_type   = discord.ui.TextInput(label="Unit Type", placeholder="e.g. Scout", max_length=40)
+    hex_address = discord.ui.TextInput(label="Hex Address", placeholder="e.g. 6,-3", max_length=12)
+
+    async def on_submit(self, i: discord.Interaction):
+        addr = str(self.hex_address).strip()
         if not is_valid(addr):
-            await interaction.response.send_message(
-                f"Invalid hex `{addr}`.", ephemeral=True); return
+            await i.response.send_message(f"Invalid hex `{addr}`.", ephemeral=True); return
         v = lambda: random.randint(-2, 2)
         pool = await get_pool()
         async with pool.acquire() as conn:
-            planet_id = await get_active_planet_id(conn, interaction.guild_id)
+            planet_id = await get_active_planet_id(conn, i.guild_id)
             await conn.execute(
                 "INSERT INTO enemy_units "
                 "(guild_id, planet_id, unit_type, hex_address, "
                 " attack, defense, speed, morale, supply, recon) "
                 "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
-                interaction.guild_id, planet_id, unit_type[:40], addr,
+                i.guild_id, planet_id, str(self.unit_type).strip()[:40], addr,
                 10+v(), 10+v(), 10+v(), 10+v(), 10+v(), 10+v())
-        await interaction.response.send_message(
-            f"**{unit_type}** spawned at `{addr}`.", ephemeral=True)
+        await i.response.send_message(
+            f"👾 **{str(self.unit_type).strip()}** spawned at `{addr}`.", ephemeral=True)
 
-    @app_commands.command(name="move_enemy",
-                          description="[GM] Queue a move for an enemy unit next turn.")
-    async def move_enemy(self, interaction: discord.Interaction,
-                         unit_id: int, target_hex: str):
-        pool = await get_pool()
-        async with pool.acquire() as conn:
-            cfg = await conn.fetchrow(
-                "SELECT gamemaster_role_id FROM guild_config WHERE guild_id=$1",
-                interaction.guild_id)
-        if not (await self._is_admin(interaction) or
-                (cfg and self._is_gm(interaction, cfg["gamemaster_role_id"]))):
-            await interaction.response.send_message("GMs only.", ephemeral=True); return
-        addr = target_hex.strip()
+
+class _MoveEnemyModal(discord.ui.Modal, title="Queue Enemy Move"):
+    unit_id     = discord.ui.TextInput(label="Enemy Unit ID", max_length=10)
+    hex_address = discord.ui.TextInput(label="Target Hex", placeholder="e.g. 4,-2", max_length=12)
+
+    async def on_submit(self, i: discord.Interaction):
+        addr = str(self.hex_address).strip()
         if not is_valid(addr):
-            await interaction.response.send_message(
-                f"Invalid hex `{addr}`.", ephemeral=True); return
+            await i.response.send_message(f"Invalid hex `{addr}`.", ephemeral=True); return
+        try:
+            uid = int(str(self.unit_id).strip())
+        except ValueError:
+            await i.response.send_message("Unit ID must be a number.", ephemeral=True); return
         pool = await get_pool()
         async with pool.acquire() as conn:
-            planet_id = await get_active_planet_id(conn, interaction.guild_id)
+            planet_id = await get_active_planet_id(conn, i.guild_id)
             await conn.execute("""
                 INSERT INTO enemy_gm_moves (guild_id, planet_id, enemy_unit_id, target_address)
                 VALUES ($1,$2,$3,$4)
                 ON CONFLICT (guild_id, enemy_unit_id)
                 DO UPDATE SET target_address=EXCLUDED.target_address
-            """, interaction.guild_id, planet_id, unit_id, addr)
-        await interaction.response.send_message(
-            f"Unit {unit_id} queued to `{addr}` next turn.", ephemeral=True)
+            """, i.guild_id, planet_id, uid, addr)
+        await i.response.send_message(
+            f"Unit **{uid}** queued to `{addr}` next turn.", ephemeral=True)
+
+
+class _RemoveEnemyModal(discord.ui.Modal, title="Remove Enemy Unit"):
+    unit_id = discord.ui.TextInput(label="Enemy Unit ID", max_length=10)
+
+    async def on_submit(self, i: discord.Interaction):
+        try:
+            uid = int(str(self.unit_id).strip())
+        except ValueError:
+            await i.response.send_message("Unit ID must be a number.", ephemeral=True); return
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            result = await conn.execute(
+                "UPDATE enemy_units SET is_active=FALSE WHERE guild_id=$1 AND id=$2",
+                i.guild_id, uid)
+        if result == "UPDATE 0":
+            await i.response.send_message(f"Enemy unit {uid} not found.", ephemeral=True)
+        else:
+            await i.response.send_message(f"Enemy unit **{uid}** removed.", ephemeral=True)
 
 
 # ── Confirm view ───────────────────────────────────────────────────────────────
@@ -667,6 +928,43 @@ class _ConfirmView(discord.ui.View):
     async def cancel(self, i: discord.Interaction, b: discord.ui.Button):
         self.stop()
         await i.response.edit_message(content="Cancelled.", view=None)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# COG — only two slash commands remain: /admin_panel and /gm_panel
+# ══════════════════════════════════════════════════════════════════════════════
+
+class AdminCog(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+
+    @app_commands.command(name="admin_panel",
+                          description="Open the admin control panel.")
+    async def admin_panel(self, interaction: discord.Interaction):
+        if not await _is_admin(self.bot, interaction):
+            await interaction.response.send_message("Admins only.", ephemeral=True)
+            return
+        await ensure_guild(interaction.guild_id)
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            theme = await get_theme(conn, interaction.guild_id)
+        embed = _admin_panel_embed(theme)
+        view  = AdminPanelView(self.bot, interaction.guild_id)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    @app_commands.command(name="gm_panel",
+                          description="Open the Game Master control panel.")
+    async def gm_panel(self, interaction: discord.Interaction):
+        if not (await _is_admin(self.bot, interaction) or await _is_gm(interaction)):
+            await interaction.response.send_message("GMs only.", ephemeral=True)
+            return
+        await ensure_guild(interaction.guild_id)
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            theme = await get_theme(conn, interaction.guild_id)
+        embed = _gm_panel_embed(theme)
+        view  = GmPanelView(self.bot, interaction.guild_id)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
 async def setup(bot):
