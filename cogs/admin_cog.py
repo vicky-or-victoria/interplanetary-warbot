@@ -324,7 +324,7 @@ class AdminPanelView(discord.ui.View):
                     """, i.guild_id, planet_id, addr, terrain)
         await i.followup.send("🎲 Terrain randomised!", ephemeral=True)
 
-    @discord.ui.button(label="🔃 Reset Terrain", style=discord.ButtonStyle.danger, row=2)
+    @discord.ui.button(label="🔃 Reset Terrain", style=discord.ButtonStyle.danger, row=4)
     async def map_reset_terrain(self, i: discord.Interaction, b: discord.ui.Button):
         if not await _is_admin(self.bot, i):
             await i.response.send_message("Admins only.", ephemeral=True); return
