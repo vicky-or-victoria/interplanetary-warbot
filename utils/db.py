@@ -34,6 +34,19 @@ async def init_schema():
         sql = f.read()
     async with pool.acquire() as conn:
         await conn.execute(sql)
+        # ── Data integrity: remove any rows with malformed hex addresses ──────
+        # Addresses must be "q,r" with exactly one comma and both parts numeric.
+        # Corrupted values (e.g. "0:1,1") can crash the turn engine.
+        await conn.execute("""
+            DELETE FROM squadrons
+            WHERE hex_address !~ '^-?[0-9]+,-?[0-9]+$'
+               OR transit_destination IS NOT NULL
+              AND transit_destination !~ '^-?[0-9]+,-?[0-9]+$'
+        """)
+        await conn.execute("""
+            DELETE FROM enemy_units
+            WHERE hex_address !~ '^-?[0-9]+,-?[0-9]+$'
+        """)
 
 
 async def ensure_guild(guild_id: int):
