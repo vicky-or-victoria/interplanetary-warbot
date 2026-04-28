@@ -13,6 +13,17 @@ from PIL import Image, ImageDraw, ImageFont
 from utils.hexmap import GRID_COORDS, hex_key, hex_center, hex_corners, GRID_SET, hexes_within, hex_distance
 from utils.brigades import brigade_ascii_icon, BRIGADES
 
+# ── Brigade colors (temporary visual markers) ────────────────────────────────
+BRIGADE_COLORS = {
+    "infantry":     (220, 220, 220),
+    "armoured":     (120, 180, 255),
+    "artillery":    (255, 120, 120),
+    "aerial":       (180, 255, 255),
+    "ranger":       (140, 220, 140),
+    "engineering":  (255, 200, 120),
+    "special_ops":  (200, 140, 255),
+}
+
 # ── Fog of War ─────────────────────────────────────────────────────────────────
 # Enemy units are only visible to players if they are within this many hexes
 # of any friendly (player) unit.  Increase to widen player vision.
@@ -172,13 +183,13 @@ def render_planet_map(
 
         if p_ct > 0 or e_ct > 0:
             dot_y = cy + HEX_SIZE * 0.55
-            dot_r = 6
+            dot_r = 8
 
             # ── Player units: one small badge per brigade type ────────────────
             if p_ct > 0:
-                badge_w = 13   # width of each brigade badge
-                badge_h = 12
-                gap     = 2
+                badge_w = 18   # width of each brigade badge
+                badge_h = 18
+                gap     = 3
                 # Collect (icon, count) pairs in stable order
                 badges = [(brigade_ascii_icon(bk), cnt)
                           for bk, cnt in sorted(brigades_map.items())
@@ -201,12 +212,15 @@ def render_planet_map(
                         fill=(shade, shade + 20, 200, 255),
                         outline=(180, 200, 255, 255), width=1)
                     try:
-                        # Icon symbol (e.g. "⚔", "✈", "⬢")
-                        bb  = draw.textbbox((0, 0), icon, font=f_pip)
-                        iw  = (bb[2] - bb[0]) / 2
-                        ih  = (bb[3] - bb[1]) / 2
-                        draw.text((bx + badge_w / 2 - iw, by + badge_h / 2 - ih),
-                                  icon, font=f_pip, fill=(220, 235, 255, 255))
+                        # Get brigade color
+                        color = BRIGADE_COLORS.get(bk, (200, 200, 200))
+
+                        # Draw inner square (acts as icon)
+                        pad = 3
+                        draw.rectangle(
+                        (bx + pad, by + pad, bx + badge_w - pad, by + badge_h - pad),
+                        fill=color
+                        )
                         # Count superscript at top-right of badge
                         if cnt > 1:
                             cnt_str = str(cnt)
@@ -695,9 +709,9 @@ def render_movement_map(
         if p_ct > 0 or e_ct > 0:
             dot_y   = cy + HEX_SIZE * 0.55
             dot_r   = 6
-            badge_w = 13
-            badge_h = 12
-            gap     = 2
+            badge_w = 18
+            badge_h = 18
+            gap     = 3
 
             if p_ct > 0:
                 badges = [(brigade_ascii_icon(bk), cnt)
@@ -715,11 +729,15 @@ def render_movement_map(
                         fill=(shade, shade + 20, 200, 255),
                         outline=(180, 200, 255, 255), width=1)
                     try:
-                        bb  = draw.textbbox((0, 0), icon, font=f_pip)
-                        iw  = (bb[2] - bb[0]) / 2
-                        ih  = (bb[3] - bb[1]) / 2
-                        draw.text((bx + badge_w / 2 - iw, by + badge_h / 2 - ih),
-                                  icon, font=f_pip, fill=(220, 235, 255, 255))
+                        # Get brigade color
+                        color = BRIGADE_COLORS.get(bk, (200, 200, 200))
+
+                        # Draw inner square (acts as icon)
+                        pad = 3
+                        draw.rectangle(
+                        (bx + pad, by + pad, bx + badge_w - pad, by + badge_h - pad),
+                        fill=color
+                        )
                         if cnt > 1:
                             cnt_str = str(cnt)
                             cb = draw.textbbox((0, 0), cnt_str, font=f_pip)
