@@ -185,23 +185,24 @@ def _draw_enemy_marker(draw, cx, cy, enemy_count, font):
     if enemy_count <= 0:
         return
 
-    r = 10
-    y = cy + HEX_SIZE * 0.56
+    r = 7
+    x = cx + HEX_SIZE * 0.24
+    y = cy + HEX_SIZE * 0.50
     points = [
-        (cx, y - r),
-        (cx - r, y + r),
-        (cx + r, y + r),
+        (x, y - r),
+        (x - r, y + r),
+        (x + r, y + r),
     ]
     outline = [
-        (cx, y - r - 2),
-        (cx - r - 2, y + r + 2),
-        (cx + r + 2, y + r + 2),
+        (x, y - r - 2),
+        (x - r - 2, y + r + 2),
+        (x + r + 2, y + r + 2),
     ]
     draw.polygon(outline, fill=(55, 0, 0, 230))
     draw.polygon(points, fill=(205, 35, 35, 255), outline=(255, 190, 190, 255))
     _centered_text(
         draw,
-        (cx - r, y - 3, cx + r, y + r + 2),
+        (x - r, y - 3, x + r, y + r + 2),
         str(enemy_count),
         font,
         fill=(255, 255, 255, 255),
@@ -355,13 +356,12 @@ def render_planet_map(
 
         if p_ct > 0 or e_ct > 0:
             player_x = cx - 16 if e_ct > 0 else cx
-            enemy_x = cx + 30 if p_ct > 0 else cx
 
             if p_ct > 0:
                 _draw_player_markers(draw, player_x, cy, brigades_map, p_ct, f_pip)
 
             if e_ct > 0:
-                _draw_enemy_marker(draw, enemy_x, cy, e_ct, f_pip)
+                _draw_enemy_marker(draw, cx, cy, e_ct, f_pip)
 
 
     # ── Title ─────────────────────────────────────────────────────────────────
@@ -829,13 +829,12 @@ def render_movement_map(
         e_ct         = units.get("enemy", 0)
         if p_ct > 0 or e_ct > 0:
             player_x = cx - 16 if e_ct > 0 else cx
-            enemy_x = cx + 30 if p_ct > 0 else cx
 
             if p_ct > 0:
                 _draw_player_markers(draw, player_x, cy, brigades_map, p_ct, f_pip)
 
             if e_ct > 0:
-                _draw_enemy_marker(draw, enemy_x, cy, e_ct, f_pip)
+                _draw_enemy_marker(draw, cx, cy, e_ct, f_pip)
 
 
     # ── Draw movement arrow ────────────────────────────────────────────────────
