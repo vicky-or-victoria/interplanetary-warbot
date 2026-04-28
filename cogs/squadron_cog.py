@@ -104,6 +104,8 @@ class UnitPanelView(discord.ui.View):
         self.add_item(list_btn)
 
     async def _move(self, interaction: discord.Interaction):
+        # Defer immediately so map render doesn't time out the interaction
+        await interaction.response.defer(ephemeral=True)
         pool = await get_pool()
         async with pool.acquire() as conn:
             planet_id = await get_active_planet_id(conn, self.guild_id)
@@ -112,20 +114,45 @@ class UnitPanelView(discord.ui.View):
                 "FROM squadrons "
                 "WHERE guild_id=$1 AND planet_id=$2 AND owner_id=$3 AND is_active=TRUE LIMIT 1",
                 self.guild_id, planet_id, interaction.user.id)
-        if not sq:
-            await interaction.response.send_message("No active unit.", ephemeral=True); return
-        if sq["in_transit"]:
-            await interaction.response.send_message("Unit is already in transit.", ephemeral=True); return
-        budget    = sq["speed"] // 2
-        remaining = max(0, budget - sq["hexes_moved_this_turn"])
-        if remaining == 0:
-            await interaction.response.send_message(
-                f"⛔ Movement exhausted for this turn (budget: {budget} hexes).", ephemeral=True); return
-        max_s = move_steps(sq["brigade"])
-        embed = _move_embed(sq["hex_address"], sq["brigade"], sq["name"], remaining=remaining, budget=budget)
-        await interaction.response.send_message(
-            embed=embed, view=MoveDirectionView(self.guild_id, max_steps=max_s, chosen_steps=min(max_s, remaining)),
-            ephemeral=True)
+            if not sq:
+                await interaction.followup.send("No active unit.", ephemeral=True); return
+            if sq["in_transit"]:
+                await interaction.followup.send("Unit is already in transit.", ephemeral=True); return
+            budget    = sq["speed"] // 2
+            remaining = max(0, budget - sq["hexes_moved_this_turn"])
+            if remaining == 0:
+                await interaction.followup.send(
+                    f"⛔ Movement exhausted for this turn (budget: {budget} hexes).", ephemeral=True); return
+            max_s = move_steps(sq["brigade"])
+
+            # Render range-only map (no arrow) centred on the unit's current hex
+            map_buf = None
+            try:
+                from utils.map_render import render_movement_map_for_guild
+                map_buf = await render_movement_map_for_guild(
+                    guild_id   = self.guild_id,
+                    conn       = conn,
+                    from_addr  = sq["hex_address"],
+                    to_addr    = sq["hex_address"],   # same hex — no arrow
+                    unit_name  = sq["name"],
+                    planet_id  = planet_id,
+                    remaining  = remaining,
+                    budget     = budget,
+                    show_arrow = False,
+                )
+            except Exception:
+                pass
+
+        embed = _move_embed(sq["hex_address"], sq["brigade"], sq["name"],
+                            remaining=remaining, budget=budget)
+        view  = MoveDirectionView(self.guild_id, max_steps=max_s,
+                                  chosen_steps=min(max_s, remaining))
+        if map_buf:
+            file = discord.File(map_buf, filename="range.png")
+            embed.set_image(url="attachment://range.png")
+            await interaction.followup.send(embed=embed, view=view, file=file, ephemeral=True)
+        else:
+            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
     async def _scavenge(self, interaction: discord.Interaction):
         await _do_scavenge(interaction, self.guild_id)
@@ -584,7 +611,7 @@ def _move_embed(hex_addr: str, brigade: str, unit_name: str,
         f"Moves **1** hex per step"
     )
     budget_note = (
-        f"\n🏃 **{remaining}/{budget}** hexes remaining this turn"
+        f"\n**{remaining}/{budget}** hexes remaining this turn"
         if remaining is not None and budget is not None else ""
     )
     exhausted_note = "\n⛔ **Movement exhausted** — resets next turn." if remaining == 0 else ""
