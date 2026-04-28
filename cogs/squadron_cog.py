@@ -23,8 +23,8 @@ from utils.brigades import (
 )
 
 
-def _bar(val: int, length: int = 10) -> str:
-    filled = max(0, min(length, int((val / 20) * length)))
+def _bar(val: int, length: int = 10, max_val: int = 20) -> str:
+    filled = max(0, min(length, int((val / max_val) * length)))
     return "▓" * filled + "░" * (length - filled)
 
 
@@ -44,17 +44,18 @@ async def build_unit_embed(sq, theme: dict, turn_count: int) -> discord.Embed:
     if sq["artillery_armed"]: flags.append("🎯 Artillery Armed")
     flag_str = "  ·  ".join(flags) + "\n" if flags else ""
 
-    hp     = sq["hp"] if "hp" in sq.keys() else 3
-    hp_bar = "❤️" * hp + "🖤" * (3 - hp)
+    hp     = sq["hp"] if "hp" in sq.keys() else 100
+    max_hp = 100
+    hp_bar = _bar(hp, max_val=max_hp, length=10)
     embed = discord.Embed(
         title=f"{brig['emoji']} {sq['owner_name']} — {sq['name']}",
         color=theme.get("color", 0xAA2222),
         description=(
             f"**Brigade:** {brig['name']}\n"
             f"**Position:** `{sq['hex_address']}`{transit_str}\n"
-            f"**HP:** {hp_bar} `{hp}/3`\n"
             f"{flag_str}\n"
             f"```\n"
+            f"   HP  {hp_bar}  {hp}/{max_hp}\n"
             f"  ATK  {_bar(sq['attack'])}  {sq['attack']}\n"
             f"  DEF  {_bar(sq['defense'])}  {sq['defense']}\n"
             f"  SPD  {_bar(sq['speed'])}  {sq['speed']}\n"
