@@ -167,22 +167,18 @@ class MoveModal(discord.ui.Modal, title="Move Unit"):
             if dist == 0:
                 await i.response.send_message("Already at that hex.", ephemeral=True); return
 
-            from utils.brigades import transit_turns as brigade_transit_turns, move_steps
-            steps = move_steps(sq["brigade"])
-            if dist <= steps:
-                # close enough to move directly this turn
-                await conn.execute(
-                    "UPDATE squadrons SET hex_address=$1, is_dug_in=FALSE WHERE id=$2",
-                    dest, sq["id"])
-                await i.response.send_message(f"✅ Moved to `{dest}`.", ephemeral=True)
-            else:
-                turns = brigade_transit_turns(sq["brigade"])
-                await conn.execute(
-                    "UPDATE squadrons SET in_transit=TRUE, transit_destination=$1, "
-                    "transit_turns_left=$2, is_dug_in=FALSE WHERE id=$3",
-                    dest, turns, sq["id"])
+            budget    = sq["speed"] // 2
+            remaining = max(0, budget - sq["hexes_moved_this_turn"])
+            if dist > remaining:
                 await i.response.send_message(
-                    f"🚀 En route to `{dest}`. Arrives in {turns} turn(s).", ephemeral=True)
+                    f"❌ That hex is **{dist}** away but you only have "
+                    f"**{remaining}/{budget}** hexes remaining this turn.", ephemeral=True); return
+
+            await conn.execute(
+                "UPDATE squadrons SET hex_address=$1, is_dug_in=FALSE, "
+                "hexes_moved_this_turn=hexes_moved_this_turn+$2 WHERE id=$3",
+                dest, dist, sq["id"])
+            await i.response.send_message(f"✅ Moved to `{dest}`.", ephemeral=True)
 
 
 # ── Scavenge ──────────────────────────────────────────────────────────────────
