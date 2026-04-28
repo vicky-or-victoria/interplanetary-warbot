@@ -227,6 +227,96 @@ def _build_turn_report_embeds(planet_name: str, turn_num: int, summaries: list, 
     return embeds
 
 
+def _turn_report_summary_embed(planet_name: str, turn_num: int, summaries: list, theme: dict) -> discord.Embed:
+    bot_name = theme.get("bot_name", "WARBOT")
+    color = theme.get("color", 0xAA2222)
+    sections = _section_report_lines(summaries)
+    player_losses, enemy_losses = _report_loss_counts(sections, theme)
+
+    description = (
+        f"**Contract Theatre:** {planet_name}\n"
+        f"**Turn:** {turn_num}\n"
+        f"**Events:** {len(summaries)} total | {len(sections.get('movement', []))} movement | "
+        f"{len(sections.get('combat', []))} combat | "
+        f"{len(sections.get('casualties', []))} casualty | "
+        f"{len(sections.get('supply', []))} supply\n"
+        f"**Losses:** {player_losses} friendly | {enemy_losses} hostile\n"
+        f"**Signal Integrity:** stable"
+    )
+    embed = discord.Embed(
+        title=f"{bot_name} | Turn {turn_num} After Action Report",
+        color=color,
+        description=description,
+    )
+    embed.set_footer(text=f"{bot_name} | {theme.get('flavor_text','')}")
+    return embed
+
+
+def _build_report_detail_embeds(
+    planet_name: str,
+    turn_num: int,
+    summaries: list,
+    theme: dict,
+    detail_title: str,
+    section_keys: list,
+) -> list:
+    bot_name = theme.get("bot_name", "WARBOT")
+    color = theme.get("color", 0xAA2222)
+    sections = _section_report_lines(summaries)
+    embed = discord.Embed(
+        title=f"{bot_name} | Turn {turn_num} {detail_title}",
+        color=color,
+        description=f"Contract Theatre: **{planet_name}**",
+    )
+    embed.set_footer(text=f"{bot_name} | private tactical detail")
+    embeds = [embed]
+
+    any_entries = False
+    section_titles = dict(REPORT_SECTIONS)
+    for key in section_keys:
+        lines = sections.get(key, [])
+        if lines:
+            any_entries = True
+        _append_field_chunks(embeds, section_titles.get(key, key.title()), lines, color)
+
+    if not any_entries:
+        _append_report_field(embeds, detail_title, "No entries for this turn.", color)
+
+    return embeds
+
+
+class TurnReportView(discord.ui.View):
+    def __init__(self, planet_name: str, turn_num: int, summaries: list, theme: dict):
+        super().__init__(timeout=604800)
+        self.planet_name = planet_name
+        self.turn_num = turn_num
+        self.summaries = list(summaries)
+        self.theme = dict(theme)
+
+    async def _send_detail(self, interaction: discord.Interaction, title: str, section_keys: list):
+        embeds = _build_report_detail_embeds(
+            self.planet_name,
+            self.turn_num,
+            self.summaries,
+            self.theme,
+            title,
+            section_keys,
+        )
+        await interaction.response.send_message(embeds=embeds[:10], ephemeral=True)
+
+    @discord.ui.button(label="Movement", style=discord.ButtonStyle.primary)
+    async def movement(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._send_detail(interaction, "Movement Report", ["movement"])
+
+    @discord.ui.button(label="Combat", style=discord.ButtonStyle.danger)
+    async def combat(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._send_detail(interaction, "Combat Report", ["combat", "casualties", "territory", "other"])
+
+    @discord.ui.button(label="Supply", style=discord.ButtonStyle.secondary)
+    async def supply(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._send_detail(interaction, "Supply Report", ["supply"])
+
+
 class TurnEngine:
     def __init__(self, bot):
         self.bot   = bot
@@ -558,17 +648,42 @@ class TurnEngine:
                                 f"💔 **{pu['owner_name']}'s {pu['name']}** took "
                                 f"**{result.attacker_damage} damage** (`{new_hp} HP` remaining).")
 
-                # ── Determine hex control and routing ─────────────────────────
-                # Routing only triggers when the winning roll is >= 10
+                # Determine hex control and routing.
+                # Routing triggers only when the winning roll beats the losing roll by 10+.
                 if result.outcome == "attacker_wins":
                     final_ctrl = "players"
-                    if result.attacker_roll >= 10:
-                        # Enemy routed — mark it (already dead or retreating handled by HP)
-                        pass
+                    enemy_routed = (result.attacker_roll - result.defender_roll) >= 10
+                    if enemy_routed:
+                        enemy_still_active = await conn.fetchval(
+                            "SELECT is_active FROM enemy_units WHERE id=$1", e["id"])
+                        if enemy_still_active:
+                            route_to = None
+                            for nb in hex_neighbors(hex_addr):
+                                player_present = await conn.fetchval(
+                                    "SELECT COUNT(*) FROM squadrons "
+                                    "WHERE guild_id=$1 AND planet_id=$2 AND hex_address=$3 "
+                                    "AND is_active=TRUE AND in_transit=FALSE",
+                                    guild_id, planet_id, nb)
+                                if not player_present:
+                                    route_to = nb
+                                    break
+                            if route_to:
+                                await conn.execute(
+                                    "UPDATE enemy_units SET hex_address=$1 WHERE id=$2",
+                                    route_to, e["id"])
+                                movement_arrows.append((hex_addr, route_to, "enemy"))
+                                summaries.append(
+                                    f"**{el} [{e['unit_type']}]** routed from `{hex_addr}` "
+                                    f"-> fell back to `{route_to}` "
+                                    f"(margin {result.attacker_roll - result.defender_roll}).")
+                            else:
+                                summaries.append(
+                                    f"**{el} [{e['unit_type']}]** held no retreat lane at `{hex_addr}` "
+                                    f"(rout margin {result.attacker_roll - result.defender_roll}).")
                 elif result.outcome == "defender_wins":
                     final_ctrl = "enemy"
                     fatigue   += 1
-                    if result.defender_roll >= 10:
+                    if (result.defender_roll - result.attacker_roll) >= 10:
                         player_routed = True
                         break
                 else:
@@ -666,5 +781,7 @@ class TurnEngine:
                     break
         if not channel:
             return
-        for embed in _build_turn_report_embeds(planet_name, turn_num, summaries, theme):
-            await channel.send(embed=embed)
+        await channel.send(
+            embed=_turn_report_summary_embed(planet_name, turn_num, summaries, theme),
+            view=TurnReportView(planet_name, turn_num, summaries, theme),
+        )
