@@ -224,13 +224,13 @@ class TurnEngine:
     async def _combat(self, conn, guild_id, planet_id, turn_num,
                        summaries, theme, enemy_type):
         p_rows = await conn.fetch(
-            "SELECT hex_address, owner_id, owner_name, name, brigade, "
-            "attack, defense, speed, morale, supply, recon, is_dug_in, artillery_armed "
+            "SELECT id, hex_address, owner_id, owner_name, name, brigade, "
+            "attack, defense, speed, morale, supply, recon, is_dug_in, artillery_armed, hp "
             "FROM squadrons "
             "WHERE guild_id=$1 AND planet_id=$2 AND is_active=TRUE AND in_transit=FALSE",
             guild_id, planet_id)
         e_rows = await conn.fetch(
-            "SELECT id, hex_address, unit_type, "
+            "SELECT id, hex_address, unit_type, hp, "
             "attack, defense, speed, morale, supply, recon "
             "FROM enemy_units "
             "WHERE guild_id=$1 AND planet_id=$2 AND is_active=TRUE",
@@ -258,6 +258,15 @@ class TurnEngine:
             # Representative brigade — use the first unit's brigade
             rep_brigade = p_units[0]["brigade"] if p_units else "infantry"
 
+            # Fetch current HP for all player units fresh from DB
+            p_hp_map = {}
+            for pu in p_units:
+                cur_hp = await conn.fetchval(
+                    "SELECT hp FROM squadrons WHERE id=$1", pu["id"]) or 100
+                p_hp_map[pu["id"]] = cur_hp
+
+            avg_player_hp = sum(p_hp_map.values()) // max(1, len(p_hp_map))
+
             player_cu = CombatUnit(
                 name=f"{pl} ({', '.join(u['name'] for u in p_units)})",
                 side="players",
@@ -266,6 +275,7 @@ class TurnEngine:
                 brigade=rep_brigade,
                 is_dug_in=any(u["is_dug_in"] for u in p_units),
                 artillery_armed=any(u["artillery_armed"] for u in p_units),
+                hp=avg_player_hp,
             )
 
             fatigue       = 0
@@ -273,6 +283,13 @@ class TurnEngine:
             final_ctrl    = "neutral"
 
             for e in e_units:
+                # Fetch fresh enemy HP
+                cur_enemy_hp = await conn.fetchval(
+                    "SELECT hp FROM enemy_units WHERE id=$1", e["id"]) or 100
+                if cur_enemy_hp <= 0:
+                    # Already dead from earlier in this loop
+                    continue
+
                 # Artillery splash: find enemy hexes adjacent to hex_addr
                 adj_enemy = []
                 if rep_brigade == "artillery" and player_cu.artillery_armed:
@@ -289,6 +306,7 @@ class TurnEngine:
                     side="enemy",
                     attack=e["attack"], defense=e["defense"], speed=e["speed"],
                     morale=e["morale"], supply=e["supply"],  recon=e["recon"],
+                    hp=cur_enemy_hp,
                 )
                 tired = CombatUnit(
                     name=player_cu.name, side="players",
@@ -300,6 +318,7 @@ class TurnEngine:
                     brigade=rep_brigade,
                     is_dug_in=player_cu.is_dug_in,
                     artillery_armed=player_cu.artillery_armed,
+                    hp=avg_player_hp,
                 )
                 result = resolve_combat(
                     tired, enemy_cu,
@@ -316,53 +335,79 @@ class TurnEngine:
                     result.attacker_roll, result.defender_roll, result.outcome)
                 summaries.append(f"⚔ **{hex_addr}**: {result.narrative}")
 
-                # Artillery splash damage — eliminate splashed enemy units
-                if result.splash_hexes:
-                    for sh in result.splash_hexes:
+                # ── Apply HP damage to enemy ──────────────────────────────────
+                if result.defender_damage > 0:
+                    new_enemy_hp = max(0, cur_enemy_hp - result.defender_damage)
+                    if new_enemy_hp <= 0:
                         await conn.execute(
-                            "UPDATE enemy_units SET is_active=FALSE "
-                            "WHERE guild_id=$1 AND planet_id=$2 AND hex_address=$3 AND is_active=TRUE",
-                            guild_id, planet_id, sh)
-                        summaries.append(f"💥 Artillery splash eliminated enemy at `{sh}`.")
+                            "UPDATE enemy_units SET hp=0, is_active=FALSE WHERE id=$1",
+                            e["id"])
+                        summaries.append(
+                            f"💀 **{el} [{e['unit_type']}]** was **destroyed** at `{hex_addr}`.")
+                    else:
+                        await conn.execute(
+                            "UPDATE enemy_units SET hp=$1 WHERE id=$2",
+                            new_enemy_hp, e["id"])
+                        summaries.append(
+                            f"🩸 **{el} [{e['unit_type']}]** `{new_enemy_hp} HP` remaining.")
 
+                # ── Apply HP damage to player units ───────────────────────────
+                if result.attacker_damage > 0:
+                    for pu in p_units:
+                        cur_hp = p_hp_map[pu["id"]]
+                        new_hp = max(0, cur_hp - result.attacker_damage)
+                        p_hp_map[pu["id"]] = new_hp
+                        # Recalculate avg for next round
+                        avg_player_hp = sum(p_hp_map.values()) // max(1, len(p_hp_map))
+                        if new_hp <= 0:
+                            await conn.execute(
+                                "UPDATE squadrons SET hp=0, is_active=FALSE WHERE id=$1",
+                                pu["id"])
+                            summaries.append(
+                                f"💀 **{pu['owner_name']}'s {pu['name']}** was **destroyed** "
+                                f"— they can re-enlist next contract.")
+                        else:
+                            await conn.execute(
+                                "UPDATE squadrons SET hp=$1 WHERE id=$2",
+                                new_hp, pu["id"])
+                            summaries.append(
+                                f"💔 **{pu['owner_name']}'s {pu['name']}** took "
+                                f"**{result.attacker_damage} damage** (`{new_hp} HP` remaining).")
+
+                # ── Determine hex control and routing ─────────────────────────
                 if result.outcome == "attacker_wins":
                     final_ctrl = "players"
-                    await conn.execute(
-                        "UPDATE enemy_units SET is_active=FALSE WHERE id=$1", e["id"])
                 elif result.outcome == "defender_wins":
                     final_ctrl    = "enemy"
                     player_routed = True
                     fatigue      += 1
-                    # Deduct 1 HP from all player units in this hex
-                    for pu in p_units:
-                        new_hp = max(0, (pu.get("hp", 3) if hasattr(pu, "get") else 3) - 1)
-                        # Fetch current hp from DB since p_units is from earlier fetch
-                        cur_hp = await conn.fetchval(
-                            "SELECT hp FROM squadrons WHERE guild_id=$1 AND owner_id=$2 "
-                            "AND planet_id=$3 AND is_active=TRUE LIMIT 1",
-                            guild_id, pu["owner_id"], planet_id) or 3
-                        new_hp = max(0, cur_hp - 1)
-                        if new_hp <= 0:
-                            # Permanently destroyed — mark inactive with hp=0
-                            await conn.execute(
-                                "UPDATE squadrons SET hp=0, is_active=FALSE "
-                                "WHERE guild_id=$1 AND planet_id=$2 AND owner_id=$3 AND is_active=TRUE",
-                                guild_id, planet_id, pu["owner_id"])
-                            summaries.append(
-                                f"💀 **{pu['owner_name']}'s {pu['name']}** was **permanently destroyed** "
-                                f"— they cannot re-enlist this contract.")
-                        else:
-                            await conn.execute(
-                                "UPDATE squadrons SET hp=$1 "
-                                "WHERE guild_id=$2 AND planet_id=$3 AND owner_id=$4 AND is_active=TRUE",
-                                new_hp, guild_id, planet_id, pu["owner_id"])
-                            summaries.append(
-                                f"💔 **{pu['owner_name']}'s {pu['name']}** lost HP "
-                                f"(`{new_hp}/3 HP remaining`).")
                     break
                 else:
                     final_ctrl = "neutral"
                     fatigue   += 1
+
+                # Artillery splash damage — deal fixed 10 HP to splashed enemy units
+                if result.splash_hexes:
+                    for sh in result.splash_hexes:
+                        splash_rows = await conn.fetch(
+                            "SELECT id, unit_type, hp FROM enemy_units "
+                            "WHERE guild_id=$1 AND planet_id=$2 AND hex_address=$3 AND is_active=TRUE",
+                            guild_id, planet_id, sh)
+                        for sr in splash_rows:
+                            splash_new_hp = max(0, (sr["hp"] or 100) - 10)
+                            if splash_new_hp <= 0:
+                                await conn.execute(
+                                    "UPDATE enemy_units SET hp=0, is_active=FALSE WHERE id=$1",
+                                    sr["id"])
+                                summaries.append(
+                                    f"💥 Artillery splash destroyed **{el} [{sr['unit_type']}]** at `{sh}`.")
+                            else:
+                                await conn.execute(
+                                    "UPDATE enemy_units SET hp=$1 WHERE id=$2",
+                                    splash_new_hp, sr["id"])
+                                summaries.append(
+                                    f"💥 Artillery splash hit **{el} [{sr['unit_type']}]** at `{sh}` "
+                                    f"(`{splash_new_hp} HP` remaining).")
 
             await conn.execute(
                 "UPDATE hexes SET controller=$1, status=$1 "
