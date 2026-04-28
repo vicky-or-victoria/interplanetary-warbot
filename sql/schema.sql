@@ -90,7 +90,7 @@ CREATE TABLE IF NOT EXISTS squadrons (
     last_moved_turn     INT         NOT NULL DEFAULT -1,
     is_dug_in           BOOLEAN     NOT NULL DEFAULT FALSE,
     artillery_armed     BOOLEAN     NOT NULL DEFAULT FALSE,
-    hp                  INT         NOT NULL DEFAULT 3,
+    hp                  INT         NOT NULL DEFAULT 100,
     UNIQUE(guild_id, planet_id, owner_id, name)
 );
 
@@ -107,7 +107,8 @@ CREATE TABLE IF NOT EXISTS enemy_units (
     supply         INT     NOT NULL DEFAULT 10,
     recon          INT     NOT NULL DEFAULT 10,
     is_active      BOOLEAN NOT NULL DEFAULT TRUE,
-    manually_moved BOOLEAN NOT NULL DEFAULT FALSE
+    manually_moved BOOLEAN NOT NULL DEFAULT FALSE,
+    hp             INT     NOT NULL DEFAULT 100
 );
 
 CREATE TABLE IF NOT EXISTS enemy_gm_moves (
@@ -200,6 +201,11 @@ DO $$ BEGIN
 EXCEPTION WHEN undefined_column THEN NULL; END $$;
 
 -- v4 additions
-DO $$ BEGIN ALTER TABLE squadrons    ADD COLUMN IF NOT EXISTS hp                    INT    NOT NULL DEFAULT 3; END $$;
+DO $$ BEGIN ALTER TABLE squadrons    ADD COLUMN IF NOT EXISTS hp                    INT    NOT NULL DEFAULT 100; END $$;
+DO $$ BEGIN ALTER TABLE enemy_units  ADD COLUMN IF NOT EXISTS hp                    INT    NOT NULL DEFAULT 100; END $$;
 DO $$ BEGIN ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS contract_name         TEXT   DEFAULT NULL; END $$;
 DO $$ BEGIN ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS announcement_channel_id BIGINT DEFAULT NULL; END $$;
+-- Migrate existing squadrons that still have the old 3-HP default to 100
+DO $$ BEGIN UPDATE squadrons SET hp=100 WHERE hp <= 3; END $$;
+-- Migrate existing enemy_units that have no hp (NULL or 0) to 100
+DO $$ BEGIN UPDATE enemy_units SET hp=100 WHERE hp IS NULL OR hp = 0; END $$;
