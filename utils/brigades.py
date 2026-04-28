@@ -10,6 +10,7 @@ BRIGADES = {
     "aerial": {
         "name":        "Aerial Brigade",
         "emoji":       "✈",
+        "ascii_icon":  ">>",   # wings / fast mover
         "description": (
             "Fast-moving air assault unit. Inserts directly from orbit. "
             "High speed and recon, light on armour."
@@ -32,6 +33,7 @@ BRIGADES = {
     "armoured": {
         "name":        "Armoured Brigade",
         "emoji":       "🛡",
+        "ascii_icon":  "[]",   # tank/armour block
         "description": (
             "Heavy mechanised unit. Devastating in assault and nearly "
             "impenetrable — but slow to deploy and resupply."
@@ -54,6 +56,7 @@ BRIGADES = {
     "infantry": {
         "name":        "Infantry Brigade",
         "emoji":       "⚔",
+        "ascii_icon":  "##",   # boots on the ground
         "description": (
             "Versatile ground forces. High morale and solid defense. "
             "Can dig in to hold a position under heavy fire."
@@ -75,6 +78,7 @@ BRIGADES = {
     "ranger": {
         "name":        "Ranger Brigade",
         "emoji":       "🎯",
+        "ascii_icon":  "/\\",  # recon / sight triangle
         "description": (
             "Light reconnaissance and survival specialists. Masters of "
             "living off the land and moving unseen."
@@ -97,6 +101,7 @@ BRIGADES = {
     "artillery": {
         "name":        "Artillery Brigade",
         "emoji":       "💥",
+        "ascii_icon":  "!*",   # bang / shell burst
         "description": (
             "Long-range fire support. Devastating when armed and stationary. "
             "Useless on the move."
@@ -120,6 +125,7 @@ BRIGADES = {
     "engineering": {
         "name":        "Engineering Brigade",
         "emoji":       "🔧",
+        "ascii_icon":  "+E",   # plus/wrench / engineer cross
         "description": (
             "Field engineers and logistics specialists. They build, repair, "
             "and sustain — turning the tide through infrastructure."
@@ -142,6 +148,7 @@ BRIGADES = {
     "special_ops": {
         "name":        "Special Operations",
         "emoji":       "🕵",
+        "ascii_icon":  "??",   # unknown / ghost
         "description": (
             "Elite covert insertion unit. Unpredictable and deadly. "
             "Goes where other brigades cannot."
@@ -199,6 +206,11 @@ def scavenge_bonus(brigade: str) -> int:
 def can_direct_insert(brigade: str) -> bool:
     """Aerial and Special Ops can deploy to any hex without transit path."""
     return brigade in ("aerial", "special_ops")
+
+
+def brigade_ascii_icon(key: str) -> str:
+    """Return the 2-character ASCII icon for a brigade (ASCII-safe, monospace-friendly)."""
+    return BRIGADES.get(key, BRIGADES["infantry"]).get("ascii_icon", "##")
 
 
 # ── Discord-friendly brigade choices list ─────────────────────────────────────
