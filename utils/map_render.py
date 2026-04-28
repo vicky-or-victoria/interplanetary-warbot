@@ -96,11 +96,11 @@ def _has_unit_markers(unit_data, key):
 def _hex_label_positions(cx, cy, occupied=False):
     if occupied:
         return {
-            "terrain_x": cx - HEX_SIZE * 0.43,
-            "terrain_y": cy - HEX_SIZE * 0.45,
-            "coord_x": cx + HEX_SIZE * 0.06,
-            "coord_y": cy - HEX_SIZE * 0.45,
-            "cornered": True,
+            "terrain_x": cx,
+            "terrain_y": cy - HEX_SIZE * 0.72,
+            "coord_x": cx,
+            "coord_y": cy - HEX_SIZE * 0.24,
+            "cornered": False,
         }
     return {
         "terrain_x": cx,
