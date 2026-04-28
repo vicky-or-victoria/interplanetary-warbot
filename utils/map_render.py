@@ -11,6 +11,7 @@ import random
 from PIL import Image, ImageDraw, ImageFont
 
 from utils.hexmap import GRID_COORDS, hex_key, hex_center, hex_corners, GRID_SET, hexes_within, hex_distance
+from utils.brigades import brigade_ascii_icon, BRIGADES
 
 # ── Fog of War ─────────────────────────────────────────────────────────────────
 # Enemy units are only visible to players if they are within this many hexes
@@ -163,51 +164,77 @@ def render_planet_map(
         key    = hex_key(gq, gr)
         cx, cy = hex_center(gq, gr, HEX_SIZE, ox, oy)
         units  = unit_data.get(key, {})
-        p_ct   = units.get("players", 0)
-        e_ct   = units.get("enemy",   0)
+        # brigades: dict of {brigade_key: count}  (new format)
+        # Fall back gracefully if caller passes old-style {"players": N}
+        brigades_map = units.get("brigades", {})
+        p_ct         = sum(brigades_map.values()) if brigades_map else units.get("players", 0)
+        e_ct         = units.get("enemy", 0)
 
         if p_ct > 0 or e_ct > 0:
             dot_y = cy + HEX_SIZE * 0.55
             dot_r = 6
 
-            if p_ct > 0 and e_ct > 0:
+            # ── Player units: one small badge per brigade type ────────────────
+            if p_ct > 0:
+                badge_w = 13   # width of each brigade badge
+                badge_h = 12
+                gap     = 2
+                # Collect (icon, count) pairs in stable order
+                badges = [(brigade_ascii_icon(bk), cnt)
+                          for bk, cnt in sorted(brigades_map.items())
+                          if cnt > 0]
+                if not badges:
+                    # legacy fallback: plain blue square with count
+                    badges = [("##", p_ct)]
+
+                total_badge_w = len(badges) * badge_w + (len(badges) - 1) * gap
+                # Centre the row of badges under the hex
+                bx_start = int(cx - total_badge_w / 2)
+
+                for bi, (icon, cnt) in enumerate(badges):
+                    bx = bx_start + bi * (badge_w + gap)
+                    by = int(dot_y - badge_h / 2)
+                    # Slightly different blue shade so stacked brigades are legible
+                    shade = max(40, 70 - bi * 8)
+                    draw.rectangle(
+                        (bx, by, bx + badge_w, by + badge_h),
+                        fill=(shade, shade + 20, 200, 255),
+                        outline=(180, 200, 255, 255), width=1)
+                    try:
+                        # Icon text (e.g. "##", ">>", "[]")
+                        bb  = draw.textbbox((0, 0), icon, font=f_pip)
+                        iw  = (bb[2] - bb[0]) / 2
+                        ih  = (bb[3] - bb[1]) / 2
+                        draw.text((bx + badge_w / 2 - iw, by + badge_h / 2 - ih),
+                                  icon, font=f_pip, fill=(220, 235, 255, 255))
+                        # Count superscript at top-right of badge
+                        if cnt > 1:
+                            cnt_str = str(cnt)
+                            cb = draw.textbbox((0, 0), cnt_str, font=f_pip)
+                            cw = cb[2] - cb[0]
+                            # tiny white count in top-right corner
+                            draw.text((bx + badge_w - cw - 1, by),
+                                      cnt_str, font=f_pip, fill=(255, 255, 180, 255))
+                    except Exception:
+                        pass
+
+            # ── Enemy units: plain red square with count (unchanged) ──────────
+            if e_ct > 0:
+                if p_ct > 0:
+                    # shift enemy badge to the right so it doesn't overlap
+                    ex_l = int(cx + p_ct * (13 + 2) / 2 + 2)
+                    ex_r = ex_l + dot_r * 2
+                else:
+                    ex_l = int(cx - dot_r)
+                    ex_r = int(cx + dot_r)
                 draw.rectangle(
-                    (cx-dot_r*2-1, dot_y-dot_r, cx-1, dot_y+dot_r),
-                    fill=(55,80,200,255), outline=(200,210,255,255), width=1)
-                draw.rectangle(
-                    (cx+1, dot_y-dot_r, cx+dot_r*2+1, dot_y+dot_r),
-                    fill=(190,40,40,255), outline=(255,190,190,255), width=1)
+                    (ex_l, dot_y - dot_r, ex_r, dot_y + dot_r),
+                    fill=(190, 40, 40, 255), outline=(255, 190, 190, 255), width=1)
                 try:
-                    bb = draw.textbbox((0,0), str(p_ct), font=f_pip)
-                    pw,ph = (bb[2]-bb[0])/2,(bb[3]-bb[1])/2
-                    draw.text((cx-dot_r-pw, dot_y-ph), str(p_ct), font=f_pip,
-                              fill=(255,255,255,255))
-                    bb = draw.textbbox((0,0), str(e_ct), font=f_pip)
-                    ew,eh = (bb[2]-bb[0])/2,(bb[3]-bb[1])/2
-                    draw.text((cx+dot_r+1-ew, dot_y-eh), str(e_ct), font=f_pip,
-                              fill=(255,255,255,255))
-                except Exception:
-                    pass
-            elif p_ct > 0:
-                draw.rectangle(
-                    (cx-dot_r, dot_y-dot_r, cx+dot_r, dot_y+dot_r),
-                    fill=(55,80,200,255), outline=(200,210,255,255), width=1)
-                try:
-                    bb = draw.textbbox((0,0), str(p_ct), font=f_pip)
-                    pw,ph = (bb[2]-bb[0])/2,(bb[3]-bb[1])/2
-                    draw.text((cx-pw, dot_y-ph), str(p_ct), font=f_pip,
-                              fill=(255,255,255,255))
-                except Exception:
-                    pass
-            else:
-                draw.rectangle(
-                    (cx-dot_r, dot_y-dot_r, cx+dot_r, dot_y+dot_r),
-                    fill=(190,40,40,255), outline=(255,190,190,255), width=1)
-                try:
-                    bb = draw.textbbox((0,0), str(e_ct), font=f_pip)
-                    ew,eh = (bb[2]-bb[0])/2,(bb[3]-bb[1])/2
-                    draw.text((cx-ew, dot_y-eh), str(e_ct), font=f_pip,
-                              fill=(255,255,255,255))
+                    bb = draw.textbbox((0, 0), str(e_ct), font=f_pip)
+                    ew, eh = (bb[2] - bb[0]) / 2, (bb[3] - bb[1]) / 2
+                    draw.text(((ex_l + ex_r) / 2 - ew, dot_y - eh),
+                              str(e_ct), font=f_pip, fill=(255, 255, 255, 255))
                 except Exception:
                     pass
 
@@ -464,7 +491,7 @@ async def render_map_for_guild(guild_id: int, conn, planet_id: int = None,
             hex_data[r["address"]] = {"terrain": r["terrain"], "status": "neutral"}
 
     sq_rows = await conn.fetch(
-        "SELECT hex_address FROM squadrons "
+        "SELECT hex_address, brigade FROM squadrons "
         "WHERE guild_id=$1 AND planet_id=$2 AND is_active=TRUE AND in_transit=FALSE",
         guild_id, planet_id)
     en_rows = await conn.fetch(
@@ -483,14 +510,15 @@ async def render_map_for_guild(guild_id: int, conn, planet_id: int = None,
 
     unit_data: dict = {}
     for r in sq_rows:
-        addr = r["hex_address"]
-        unit_data.setdefault(addr, {"players": 0, "enemy": 0})
-        unit_data[addr]["players"] += 1
+        addr    = r["hex_address"]
+        brigade = r["brigade"] or "infantry"
+        entry   = unit_data.setdefault(addr, {"brigades": {}, "enemy": 0})
+        entry["brigades"][brigade] = entry["brigades"].get(brigade, 0) + 1
     for r in en_rows:
         addr = r["hex_address"]
         # Only show this enemy unit if it falls inside a player's vision cone
         if addr in visible_hexes:
-            unit_data.setdefault(addr, {"players": 0, "enemy": 0})
+            unit_data.setdefault(addr, {"brigades": {}, "enemy": 0})
             unit_data[addr]["enemy"] += 1
 
     turn_count = await conn.fetchval(
@@ -661,22 +689,56 @@ def render_movement_map(
         key    = hex_key(gq, gr)
         cx, cy = hex_center(gq, gr, HEX_SIZE, ox, oy)
         units  = unit_data.get(key, {})
-        p_ct   = units.get("players", 0)
-        e_ct   = units.get("enemy",   0)
+        brigades_map = units.get("brigades", {})
+        p_ct         = sum(brigades_map.values()) if brigades_map else units.get("players", 0)
+        e_ct         = units.get("enemy", 0)
         if p_ct > 0 or e_ct > 0:
-            dot_y = cy + HEX_SIZE * 0.55
-            dot_r = 6
-            if p_ct > 0 and e_ct > 0:
-                draw.rectangle((cx-dot_r*2-1, dot_y-dot_r, cx-1, dot_y+dot_r),
-                    fill=(55,80,200,255), outline=(200,210,255,255), width=1)
-                draw.rectangle((cx+1, dot_y-dot_r, cx+dot_r*2+1, dot_y+dot_r),
-                    fill=(190,40,40,255), outline=(255,190,190,255), width=1)
-            elif p_ct > 0:
-                draw.rectangle((cx-dot_r, dot_y-dot_r, cx+dot_r, dot_y+dot_r),
-                    fill=(55,80,200,255), outline=(200,210,255,255), width=1)
-            else:
-                draw.rectangle((cx-dot_r, dot_y-dot_r, cx+dot_r, dot_y+dot_r),
-                    fill=(190,40,40,255), outline=(255,190,190,255), width=1)
+            dot_y   = cy + HEX_SIZE * 0.55
+            dot_r   = 6
+            badge_w = 13
+            badge_h = 12
+            gap     = 2
+
+            if p_ct > 0:
+                badges = [(brigade_ascii_icon(bk), cnt)
+                          for bk, cnt in sorted(brigades_map.items()) if cnt > 0]
+                if not badges:
+                    badges = [("##", p_ct)]
+                total_badge_w = len(badges) * badge_w + (len(badges) - 1) * gap
+                bx_start = int(cx - total_badge_w / 2)
+                for bi, (icon, cnt) in enumerate(badges):
+                    bx = bx_start + bi * (badge_w + gap)
+                    by = int(dot_y - badge_h / 2)
+                    shade = max(40, 70 - bi * 8)
+                    draw.rectangle(
+                        (bx, by, bx + badge_w, by + badge_h),
+                        fill=(shade, shade + 20, 200, 255),
+                        outline=(180, 200, 255, 255), width=1)
+                    try:
+                        bb  = draw.textbbox((0, 0), icon, font=f_pip)
+                        iw  = (bb[2] - bb[0]) / 2
+                        ih  = (bb[3] - bb[1]) / 2
+                        draw.text((bx + badge_w / 2 - iw, by + badge_h / 2 - ih),
+                                  icon, font=f_pip, fill=(220, 235, 255, 255))
+                        if cnt > 1:
+                            cnt_str = str(cnt)
+                            cb = draw.textbbox((0, 0), cnt_str, font=f_pip)
+                            cw = cb[2] - cb[0]
+                            draw.text((bx + badge_w - cw - 1, by),
+                                      cnt_str, font=f_pip, fill=(255, 255, 180, 255))
+                    except Exception:
+                        pass
+
+            if e_ct > 0:
+                if p_ct > 0:
+                    ex_l = int(cx + p_ct * (badge_w + gap) / 2 + 2)
+                    ex_r = ex_l + dot_r * 2
+                else:
+                    ex_l = int(cx - dot_r)
+                    ex_r = int(cx + dot_r)
+                draw.rectangle(
+                    (ex_l, dot_y - dot_r, ex_r, dot_y + dot_r),
+                    fill=(190, 40, 40, 255), outline=(255, 190, 190, 255), width=1)
 
     # ── Draw movement arrow ────────────────────────────────────────────────────
     draw = ImageDraw.Draw(img)
@@ -867,7 +929,7 @@ async def render_movement_map_for_guild(
             hex_data[r["address"]] = {"terrain": r["terrain"], "status": "neutral"}
 
     sq_rows = await conn.fetch(
-        "SELECT hex_address FROM squadrons "
+        "SELECT hex_address, brigade FROM squadrons "
         "WHERE guild_id=$1 AND planet_id=$2 AND is_active=TRUE AND in_transit=FALSE",
         guild_id, planet_id)
     en_rows = await conn.fetch(
@@ -877,12 +939,13 @@ async def render_movement_map_for_guild(
 
     unit_data: dict = {}
     for r in sq_rows:
-        addr = r["hex_address"]
-        unit_data.setdefault(addr, {"players": 0, "enemy": 0})
-        unit_data[addr]["players"] += 1
+        addr    = r["hex_address"]
+        brigade = r["brigade"] or "infantry"
+        entry   = unit_data.setdefault(addr, {"brigades": {}, "enemy": 0})
+        entry["brigades"][brigade] = entry["brigades"].get(brigade, 0) + 1
     for r in en_rows:
         addr = r["hex_address"]
-        unit_data.setdefault(addr, {"players": 0, "enemy": 0})
+        unit_data.setdefault(addr, {"brigades": {}, "enemy": 0})
         unit_data[addr]["enemy"] += 1
 
     theme = await get_theme(conn, guild_id)
@@ -945,12 +1008,13 @@ async def render_gm_map_for_guild(guild_id: int, conn, planet_id: int = None,
 
     unit_data: dict = {}
     for r in sq_rows:
-        addr = r["hex_address"]
-        unit_data.setdefault(addr, {"players": 0, "enemy": 0})
-        unit_data[addr]["players"] += 1
+        addr    = r["hex_address"]
+        brigade = r["brigade"] or "infantry"
+        entry   = unit_data.setdefault(addr, {"brigades": {}, "enemy": 0})
+        entry["brigades"][brigade] = entry["brigades"].get(brigade, 0) + 1
     for r in en_rows:
         addr = r["hex_address"]
-        unit_data.setdefault(addr, {"players": 0, "enemy": 0})
+        unit_data.setdefault(addr, {"brigades": {}, "enemy": 0})
         unit_data[addr]["enemy"] += 1
 
     gm_player_labels: dict = {}
