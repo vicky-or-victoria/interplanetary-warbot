@@ -96,12 +96,18 @@ def _has_unit_markers(unit_data, key):
 def _hex_label_positions(cx, cy, occupied=False):
     if occupied:
         return {
-            "terrain_y": cy - HEX_SIZE * 0.55,
-            "coord_y": cy - HEX_SIZE * 0.22,
+            "terrain_x": cx - HEX_SIZE * 0.43,
+            "terrain_y": cy - HEX_SIZE * 0.45,
+            "coord_x": cx + HEX_SIZE * 0.06,
+            "coord_y": cy - HEX_SIZE * 0.45,
+            "cornered": True,
         }
     return {
+        "terrain_x": cx,
         "terrain_y": cy - HEX_SIZE * 0.52,
+        "coord_x": cx,
         "coord_y": cy,
+        "cornered": False,
     }
 
 
@@ -310,7 +316,7 @@ def render_planet_map(
             try:
                 bb   = draw.textbbox((0,0), abbr, font=f_abbr)
                 aw   = (bb[2]-bb[0])/2
-                ax   = cx - aw
+                ax   = label_pos["terrain_x"] if label_pos["cornered"] else cx - aw
                 ay   = label_pos["terrain_y"]
                 # White shadow/outline for contrast on all terrain
                 for ox2, oy2 in [(-1,-1),(1,-1),(-1,1),(1,1),(0,-1),(0,1),(-1,0),(1,0)]:
@@ -325,7 +331,7 @@ def render_planet_map(
             bb  = draw.textbbox((0,0), lbl, font=f_coord)
             lw  = (bb[2]-bb[0])/2
             lh  = (bb[3]-bb[1])/2
-            lx2 = cx - lw
+            lx2 = label_pos["coord_x"] if label_pos["cornered"] else cx - lw
             label_cy = label_pos["coord_y"]
             ly2 = label_cy - lh
             # White shadow for contrast on dark tiles
@@ -753,7 +759,8 @@ def render_movement_map(
             try:
                 bb  = draw.textbbox((0,0), abbr, font=f_abbr)
                 aw  = (bb[2]-bb[0])/2
-                ax, ay = cx-aw, label_pos["terrain_y"]
+                ax = label_pos["terrain_x"] if label_pos["cornered"] else cx - aw
+                ay = label_pos["terrain_y"]
                 for dx2, dy2 in [(-1,-1),(1,-1),(-1,1),(1,1),(0,-1),(0,1),(-1,0),(1,0)]:
                     draw.text((ax+dx2, ay+dy2), abbr, font=f_abbr, fill=(255,255,255,200))
                 draw.text((ax, ay), abbr, font=f_abbr, fill=(0,0,0,255))
@@ -766,7 +773,8 @@ def render_movement_map(
             lw2 = (bb[2]-bb[0])/2
             lh2 = (bb[3]-bb[1])/2
             label_cy = label_pos["coord_y"]
-            lx2, ly2 = cx-lw2, label_cy-lh2
+            lx2 = label_pos["coord_x"] if label_pos["cornered"] else cx - lw2
+            ly2 = label_cy-lh2
             for dx2, dy2 in [(-1,-1),(1,-1),(-1,1),(1,1),(0,-1),(0,1),(-1,0),(1,0)]:
                 draw.text((lx2+dx2, ly2+dy2), lbl, font=f_coord, fill=(255,255,255,200))
             draw.text((lx2, ly2), lbl, font=f_coord, fill=(0,0,0,255))
