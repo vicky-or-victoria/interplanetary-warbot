@@ -374,7 +374,13 @@ class AdminPanelView(discord.ui.View):
                 await self.bot.turn_engine._resolve(conn, i.guild_id)
             await i.followup.send("✅ Turn forced successfully.", ephemeral=True)
         except Exception as e:
-            await i.followup.send(f"❌ Force turn failed: {e}", ephemeral=True)
+            import traceback
+            tb = traceback.format_exc()[-1800:]
+            await i.followup.send(
+                f"❌ Force turn failed: {e}
+```
+{tb}
+```", ephemeral=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
