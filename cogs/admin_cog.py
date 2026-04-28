@@ -376,11 +376,8 @@ class AdminPanelView(discord.ui.View):
         except Exception as e:
             import traceback
             tb = traceback.format_exc()[-1800:]
-            await i.followup.send(
-                f"❌ Force turn failed: {e}
-```
-{tb}
-```", ephemeral=True)
+            msg = "\u274c Force turn failed: " + str(e) + "\n```\n" + tb + "\n```"
+            await i.followup.send(msg, ephemeral=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
