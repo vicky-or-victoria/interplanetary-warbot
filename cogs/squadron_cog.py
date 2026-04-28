@@ -642,6 +642,10 @@ class MoveDirectionView(discord.ui.View):
     # ── Internal move logic ────────────────────────────────────────────────────
 
     async def _do_move(self, interaction: discord.Interaction, dir_key: str):
+        # Defer immediately — DB work + map render can exceed Discord's 3-second window.
+        # ephemeral=True keeps the response visible only to the player.
+        await interaction.response.defer(ephemeral=True)
+
         dir_index = self._DIR[dir_key]
         dq, dr    = DIRECTIONS[dir_index]
         pool      = await get_pool()
@@ -652,10 +656,10 @@ class MoveDirectionView(discord.ui.View):
                 "WHERE guild_id=$1 AND planet_id=$2 AND owner_id=$3 AND is_active=TRUE LIMIT 1",
                 interaction.guild_id, planet_id, interaction.user.id)
             if not sq:
-                await interaction.response.send_message("No active unit.", ephemeral=True)
+                await interaction.followup.send("No active unit.", ephemeral=True)
                 return
             if sq["in_transit"]:
-                await interaction.response.send_message("Unit is in transit.", ephemeral=True)
+                await interaction.followup.send("Unit is in transit.", ephemeral=True)
                 return
 
             max_s    = move_steps(sq["brigade"])
@@ -672,7 +676,7 @@ class MoveDirectionView(discord.ui.View):
                     break
 
             if new_addr == old_addr:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     "Cannot move that direction — grid edge.", ephemeral=True)
                 return
 
@@ -680,6 +684,20 @@ class MoveDirectionView(discord.ui.View):
                 "UPDATE squadrons SET hex_address=$1, is_dug_in=FALSE, "
                 "artillery_armed=FALSE WHERE id=$2",
                 new_addr, sq["id"])
+
+            # Persist this arrow so it survives across subsequent move actions
+            await conn.execute(
+                "INSERT INTO movement_arrows "
+                "(guild_id, planet_id, from_addr, to_addr, side, owner_id) "
+                "VALUES ($1, $2, $3, $4, 'player', $5)",
+                interaction.guild_id, planet_id, old_addr, new_addr, interaction.user.id)
+
+            # Load ALL accumulated arrows for this guild this turn
+            arrow_rows = await conn.fetch(
+                "SELECT from_addr, to_addr, side FROM movement_arrows "
+                "WHERE guild_id=$1 AND planet_id=$2",
+                interaction.guild_id, planet_id)
+            all_arrows = [(r["from_addr"], r["to_addr"], r["side"]) for r in arrow_rows]
 
             map_buf = None
             try:
@@ -695,13 +713,13 @@ class MoveDirectionView(discord.ui.View):
             except Exception:
                 pass
 
-        # Update the live global map with this movement arrow
+        # Update the live global map showing ALL arrows accumulated this turn
         try:
             from cogs.map_cog import auto_update_map
             await auto_update_map(
                 interaction.client,
                 interaction.guild_id,
-                movement_arrows=[(old_addr, new_addr, "player")],
+                movement_arrows=all_arrows,
             )
         except Exception:
             pass
@@ -712,10 +730,11 @@ class MoveDirectionView(discord.ui.View):
         if map_buf:
             file = discord.File(map_buf, filename="movement.png")
             embed.set_image(url="attachment://movement.png")
-            await interaction.response.edit_message(
-                embed=embed, view=new_view, attachments=[file])
+            # After deferring we must use followup — edit_message is no longer available.
+            # Send a new ephemeral message containing the updated pad + movement map.
+            await interaction.followup.send(embed=embed, view=new_view, file=file, ephemeral=True)
         else:
-            await interaction.response.edit_message(embed=embed, view=new_view)
+            await interaction.followup.send(embed=embed, view=new_view, ephemeral=True)
 
     # ── Direction buttons ──────────────────────────────────────────────────────
     # Row 0 — NW  N  NE
