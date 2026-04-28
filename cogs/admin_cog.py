@@ -17,6 +17,7 @@ from utils.db import get_pool, ensure_guild, get_theme, get_active_planet_id
 from utils.hexmap import ensure_hexes, is_valid, GRID_COORDS, hex_key
 from utils.map_render import TERRAIN_TYPES
 from utils.brigades import BRIGADES
+from utils.profiles import cosmetic_key, ensure_commander_profile, grant_default_banner
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -356,6 +357,15 @@ class AdminPanelView(discord.ui.View):
             await i.response.send_message("Admins only.", ephemeral=True); return
         await i.response.send_modal(_RoleModal("gamemaster_role_id", "GM Role ID"))
 
+    @discord.ui.button(label="Cosmetics", style=discord.ButtonStyle.primary, row=4)
+    async def cosmetics(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await _is_admin(self.bot, i):
+            await i.response.send_message("Admins only.", ephemeral=True); return
+        await i.response.send_message(
+            "Manage banner and badge definitions.",
+            view=_AdminCosmeticView(self.bot, i.guild_id),
+            ephemeral=True)
+
     @discord.ui.button(label="⏩ Force Turn", style=discord.ButtonStyle.danger, row=0)
     async def force_turn(self, i: discord.Interaction, b: discord.ui.Button):
         if not await _is_admin(self.bot, i):
@@ -526,8 +536,331 @@ class GmPanelView(discord.ui.View):
         except Exception as e:
             await i.followup.send(f"Error rendering GM map: {e}", ephemeral=True)
 
+    @discord.ui.button(label="Grant Banner", style=discord.ButtonStyle.primary, row=4)
+    async def grant_banner(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await self._check(i): return
+        await i.response.send_modal(_GrantCosmeticModal("banner", remove=False))
+
+    @discord.ui.button(label="Remove Banner", style=discord.ButtonStyle.secondary, row=4)
+    async def remove_banner(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await self._check(i): return
+        await i.response.send_modal(_GrantCosmeticModal("banner", remove=True))
+
+    @discord.ui.button(label="Grant Badge", style=discord.ButtonStyle.primary, row=4)
+    async def grant_badge(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await self._check(i): return
+        await i.response.send_modal(_GrantCosmeticModal("badge", remove=False))
+
+    @discord.ui.button(label="Remove Badge", style=discord.ButtonStyle.secondary, row=4)
+    async def remove_badge(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await self._check(i): return
+        await i.response.send_modal(_GrantCosmeticModal("badge", remove=True))
+
+
+class _AdminCosmeticView(discord.ui.View):
+    def __init__(self, bot, guild_id: int):
+        super().__init__(timeout=300)
+        self.bot = bot
+        self.guild_id = guild_id
+
+    async def _check(self, i: discord.Interaction) -> bool:
+        if await _is_admin(self.bot, i):
+            return True
+        await i.response.send_message("Admins only.", ephemeral=True)
+        return False
+
+    @discord.ui.button(label="Add Banner", style=discord.ButtonStyle.primary, row=0)
+    async def add_banner(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await self._check(i): return
+        await i.response.send_modal(_BannerAddModal())
+
+    @discord.ui.button(label="Remove Banner", style=discord.ButtonStyle.danger, row=0)
+    async def remove_banner(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await self._check(i): return
+        await i.response.send_modal(_BannerRemoveModal())
+
+    @discord.ui.button(label="Add Badge", style=discord.ButtonStyle.primary, row=1)
+    async def add_badge(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await self._check(i): return
+        await i.response.send_modal(_BadgeAddModal())
+
+    @discord.ui.button(label="Remove Badge", style=discord.ButtonStyle.danger, row=1)
+    async def remove_badge(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await self._check(i): return
+        await i.response.send_modal(_BadgeRemoveModal())
+
+
+class _PagedPanelView(discord.ui.View):
+    def __init__(self, bot, guild_id: int, theme: dict, pages: list[dict], legacy):
+        super().__init__(timeout=300)
+        self.bot = bot
+        self.guild_id = guild_id
+        self.theme = theme
+        self.pages = pages
+        self.legacy = legacy
+        self.page = 0
+        self._rebuild()
+
+    def _embed(self) -> discord.Embed:
+        data = self.pages[self.page]
+        embed = discord.Embed(
+            title=f"{self.theme.get('bot_name', 'WARBOT')} - {data['title']}",
+            color=self.theme.get("color", 0xAA2222),
+            description=data["description"],
+        )
+        embed.set_footer(text=f"Page {self.page + 1}/{len(self.pages)}")
+        return embed
+
+    def _rebuild(self):
+        self.clear_items()
+        for idx, item in enumerate(self.pages[self.page]["items"]):
+            button = discord.ui.Button(
+                label=item["label"],
+                style=item.get("style", discord.ButtonStyle.secondary),
+                row=idx // 4)
+
+            async def callback(i: discord.Interaction, b=button, method=item["method"]):
+                await getattr(self.legacy, method)(i, b)
+
+            button.callback = callback
+            self.add_item(button)
+
+        prev_button = discord.ui.Button(label="Previous", style=discord.ButtonStyle.secondary, row=4)
+        next_button = discord.ui.Button(label="Next", style=discord.ButtonStyle.primary, row=4)
+        prev_button.disabled = self.page == 0
+        next_button.disabled = self.page >= len(self.pages) - 1
+
+        async def prev_cb(i: discord.Interaction):
+            self.page = max(0, self.page - 1)
+            self._rebuild()
+            await i.response.edit_message(embed=self._embed(), view=self)
+
+        async def next_cb(i: discord.Interaction):
+            self.page = min(len(self.pages) - 1, self.page + 1)
+            self._rebuild()
+            await i.response.edit_message(embed=self._embed(), view=self)
+
+        prev_button.callback = prev_cb
+        next_button.callback = next_cb
+        self.add_item(prev_button)
+        self.add_item(next_button)
+
+
+class AdminPanelPagerView(_PagedPanelView):
+    def __init__(self, bot, guild_id: int, theme: dict):
+        pages = [
+            {
+                "title": "Admin Panel / Game",
+                "description": "Core contract controls and current war status.",
+                "items": [
+                    {"label": "Status", "method": "game_status"},
+                    {"label": "Turn Interval", "method": "set_turn_interval"},
+                    {"label": "Force Turn", "method": "force_turn", "style": discord.ButtonStyle.danger},
+                    {"label": "Reset War", "method": "game_reset", "style": discord.ButtonStyle.danger},
+                ],
+            },
+            {
+                "title": "Admin Panel / Planets",
+                "description": "Create, edit, remove, and activate contract theatres.",
+                "items": [
+                    {"label": "List Planets", "method": "planet_list"},
+                    {"label": "Add Planet", "method": "planet_add"},
+                    {"label": "Set Active", "method": "planet_set_active", "style": discord.ButtonStyle.primary},
+                    {"label": "Edit Planet", "method": "planet_edit"},
+                    {"label": "Remove Planet", "method": "planet_remove", "style": discord.ButtonStyle.danger},
+                ],
+            },
+            {
+                "title": "Admin Panel / Appearance",
+                "description": "Theme, color, terrain, and cosmetic definitions.",
+                "items": [
+                    {"label": "View Theme", "method": "theme_view"},
+                    {"label": "Set Theme", "method": "theme_set"},
+                    {"label": "Set Color", "method": "theme_color"},
+                    {"label": "Set Terrain", "method": "map_set_terrain"},
+                    {"label": "Random Terrain", "method": "map_random_terrain"},
+                    {"label": "Reset Terrain", "method": "map_reset_terrain", "style": discord.ButtonStyle.danger},
+                    {"label": "Cosmetics", "method": "cosmetics", "style": discord.ButtonStyle.primary},
+                ],
+            },
+            {
+                "title": "Admin Panel / Channels & Roles",
+                "description": "Route bot output and set staff/player roles.",
+                "items": [
+                    {"label": "Map Channel", "method": "set_map_channel"},
+                    {"label": "Overview Channel", "method": "set_overview_channel"},
+                    {"label": "Menu Channel", "method": "set_menu_channel"},
+                    {"label": "Enlist Channel", "method": "set_enlist_channel"},
+                    {"label": "Report Channel", "method": "set_report_channel"},
+                    {"label": "Announcement", "method": "set_announcement_channel"},
+                    {"label": "Admin Role", "method": "set_admin_role"},
+                    {"label": "Player Role", "method": "set_player_role"},
+                    {"label": "GM Role", "method": "set_gm_role"},
+                ],
+            },
+        ]
+        super().__init__(bot, guild_id, theme, pages, AdminPanelView(bot, guild_id))
+
+
+class GmPanelPagerView(_PagedPanelView):
+    def __init__(self, bot, guild_id: int, theme: dict):
+        pages = [
+            {
+                "title": "GM Panel / Contract",
+                "description": "Start, pause, conclude, and inspect the current theatre.",
+                "items": [
+                    {"label": "Start Contract", "method": "start_contract", "style": discord.ButtonStyle.success},
+                    {"label": "Pause Contract", "method": "pause_contract"},
+                    {"label": "Conclude Contract", "method": "conclude_contract", "style": discord.ButtonStyle.danger},
+                    {"label": "GM Map", "method": "gm_map", "style": discord.ButtonStyle.success},
+                ],
+            },
+            {
+                "title": "GM Panel / Enemies",
+                "description": "Spawn, move, list, and remove hostile units.",
+                "items": [
+                    {"label": "Spawn Enemy", "method": "spawn_enemy", "style": discord.ButtonStyle.danger},
+                    {"label": "Bulk Spawn", "method": "bulk_spawn_enemy", "style": discord.ButtonStyle.danger},
+                    {"label": "Move Enemy", "method": "move_enemy", "style": discord.ButtonStyle.primary},
+                    {"label": "Bulk Move", "method": "bulk_move_enemy", "style": discord.ButtonStyle.primary},
+                    {"label": "List Enemies", "method": "list_enemies"},
+                    {"label": "Remove Enemy", "method": "remove_enemy", "style": discord.ButtonStyle.danger},
+                ],
+            },
+            {
+                "title": "GM Panel / Cosmetics",
+                "description": "Grant or revoke player banner and badge cosmetics by Discord ID and cosmetic key.",
+                "items": [
+                    {"label": "Grant Banner", "method": "grant_banner", "style": discord.ButtonStyle.primary},
+                    {"label": "Remove Banner", "method": "remove_banner"},
+                    {"label": "Grant Badge", "method": "grant_badge", "style": discord.ButtonStyle.primary},
+                    {"label": "Remove Badge", "method": "remove_badge"},
+                ],
+            },
+        ]
+        super().__init__(bot, guild_id, theme, pages, GmPanelView(bot, guild_id))
+
 
 # ══════════════════════════════════════════════════════════════════════════════
+# COSMETIC MODALS
+# ══════════════════════════════════════════════════════════════════════════════
+
+class _BannerAddModal(discord.ui.Modal, title="Add Banner"):
+    name = discord.ui.TextInput(label="Banner Name", max_length=60)
+    image_url = discord.ui.TextInput(label="Image URL", max_length=500)
+
+    async def on_submit(self, i: discord.Interaction):
+        key = cosmetic_key(str(self.name))
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO cosmetic_banners (guild_id, banner_key, name, image_url, created_by)
+                VALUES ($1,$2,$3,$4,$5)
+                ON CONFLICT (guild_id, banner_key) DO UPDATE
+                SET name=EXCLUDED.name, image_url=EXCLUDED.image_url
+            """, i.guild_id, key, str(self.name).strip(), str(self.image_url).strip(), i.user.id)
+        await i.response.send_message(f"Banner `{key}` saved.", ephemeral=True)
+
+
+class _BannerRemoveModal(discord.ui.Modal, title="Remove Banner"):
+    banner_key = discord.ui.TextInput(label="Banner Key", max_length=40)
+
+    async def on_submit(self, i: discord.Interaction):
+        key = cosmetic_key(str(self.banner_key))
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "DELETE FROM commander_banners WHERE guild_id=$1 AND banner_key=$2",
+                i.guild_id, key)
+            await conn.execute(
+                "UPDATE commander_profiles SET selected_banner_key=NULL "
+                "WHERE guild_id=$1 AND selected_banner_key=$2",
+                i.guild_id, key)
+            result = await conn.execute(
+                "DELETE FROM cosmetic_banners WHERE guild_id=$1 AND banner_key=$2",
+                i.guild_id, key)
+        await i.response.send_message(f"Removed banner `{key}` ({result}).", ephemeral=True)
+
+
+class _BadgeAddModal(discord.ui.Modal, title="Add Badge"):
+    name = discord.ui.TextInput(label="Badge Name", max_length=60)
+    symbol = discord.ui.TextInput(label="Badge Symbol", placeholder="ASCII preferred, e.g. * or ^", max_length=8)
+
+    async def on_submit(self, i: discord.Interaction):
+        key = cosmetic_key(str(self.name))
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO cosmetic_badges (guild_id, badge_key, symbol, text, created_by)
+                VALUES ($1,$2,$3,$4,$5)
+                ON CONFLICT (guild_id, badge_key) DO UPDATE
+                SET symbol=EXCLUDED.symbol, text=EXCLUDED.text
+            """, i.guild_id, key, str(self.symbol).strip()[:8], str(self.name).strip(), i.user.id)
+        await i.response.send_message(f"Badge `{key}` saved.", ephemeral=True)
+
+
+class _BadgeRemoveModal(discord.ui.Modal, title="Remove Badge"):
+    badge_key = discord.ui.TextInput(label="Badge Key", max_length=40)
+
+    async def on_submit(self, i: discord.Interaction):
+        key = cosmetic_key(str(self.badge_key))
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "DELETE FROM commander_badges WHERE guild_id=$1 AND badge_key=$2",
+                i.guild_id, key)
+            result = await conn.execute(
+                "DELETE FROM cosmetic_badges WHERE guild_id=$1 AND badge_key=$2",
+                i.guild_id, key)
+        await i.response.send_message(f"Removed badge `{key}` ({result}).", ephemeral=True)
+
+
+class _GrantCosmeticModal(discord.ui.Modal):
+    owner_id = discord.ui.TextInput(label="Player Discord ID", max_length=24)
+    key = discord.ui.TextInput(label="Cosmetic Key", max_length=40)
+
+    def __init__(self, kind: str, remove: bool = False):
+        super().__init__(title=("Remove " if remove else "Grant ") + kind.title())
+        self.kind = kind
+        self.remove = remove
+
+    async def on_submit(self, i: discord.Interaction):
+        try:
+            owner_id = int(str(self.owner_id).strip())
+        except ValueError:
+            await i.response.send_message("Player Discord ID must be numeric.", ephemeral=True)
+            return
+        key = cosmetic_key(str(self.key))
+        table = "commander_banners" if self.kind == "banner" else "commander_badges"
+        key_col = "banner_key" if self.kind == "banner" else "badge_key"
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await ensure_commander_profile(conn, i.guild_id, owner_id, f"Commandant {owner_id}")
+            if self.kind == "banner":
+                await grant_default_banner(conn, i.guild_id, owner_id)
+            if self.remove:
+                await conn.execute(
+                    f"DELETE FROM {table} WHERE guild_id=$1 AND owner_id=$2 AND {key_col}=$3",
+                    i.guild_id, owner_id, key)
+                if self.kind == "banner":
+                    await conn.execute(
+                        "UPDATE commander_profiles SET selected_banner_key=NULL "
+                        "WHERE guild_id=$1 AND owner_id=$2 AND selected_banner_key=$3",
+                        i.guild_id, owner_id, key)
+            else:
+                await conn.execute(
+                    f"INSERT INTO {table} (guild_id, owner_id, {key_col}, granted_by) "
+                    "VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING",
+                    i.guild_id, owner_id, key, i.user.id)
+                if self.kind == "banner":
+                    await conn.execute(
+                        "UPDATE commander_profiles SET selected_banner_key=$3, updated_at=NOW() "
+                        "WHERE guild_id=$1 AND owner_id=$2",
+                        i.guild_id, owner_id, key)
+        action = "Removed" if self.remove else "Granted"
+        await i.response.send_message(f"{action} {self.kind} `{key}` for `{owner_id}`.", ephemeral=True)
+
+
 # MODALS
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -964,6 +1297,15 @@ class _StartContractModal(discord.ui.Modal, title="Start Contract"):
                 "SELECT name, contractor, enemy_type FROM planets WHERE guild_id=$1 AND id=$2",
                 i.guild_id, planet_id)
             await ensure_hexes(i.guild_id, conn, planet_id)
+            for tbl in ("squadrons", "enemy_units", "combat_log",
+                        "turn_history", "enemy_gm_moves", "movement_arrows"):
+                await conn.execute(
+                    f"DELETE FROM {tbl} WHERE guild_id=$1 AND planet_id=$2",
+                    i.guild_id, planet_id)
+            await conn.execute(
+                "UPDATE hexes SET controller='neutral', status='neutral' "
+                "WHERE guild_id=$1 AND planet_id=$2",
+                i.guild_id, planet_id)
             await conn.execute(
                 "UPDATE guild_config SET game_started=TRUE, contract_name=$1 WHERE guild_id=$2",
                 name, i.guild_id)
@@ -984,7 +1326,7 @@ class _StartContractModal(discord.ui.Modal, title="Start Contract"):
                         f"**Planet:** {planet['name'] if planet else '—'}\n"
                         f"**Contractor:** {planet['contractor'] if planet else '—'}\n"
                         f"**Enemy:** {planet['enemy_type'] if planet else '—'}\n\n"
-                        f"*Operatives may now enlist and deploy. Good luck.*"
+                        f"*Commandants may now enlist or deploy. Good luck.*"
                     ),
                 )
                 embed.set_footer(text=theme.get("flavor_text", "The contract must be fulfilled."))
@@ -1256,8 +1598,8 @@ class AdminCog(commands.Cog):
         pool = await get_pool()
         async with pool.acquire() as conn:
             theme = await get_theme(conn, interaction.guild_id)
-        embed = _admin_panel_embed(theme)
-        view  = AdminPanelView(self.bot, interaction.guild_id)
+        view  = AdminPanelPagerView(self.bot, interaction.guild_id, theme)
+        embed = view._embed()
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     @app_commands.command(name="gm_panel",
@@ -1270,8 +1612,8 @@ class AdminCog(commands.Cog):
         pool = await get_pool()
         async with pool.acquire() as conn:
             theme = await get_theme(conn, interaction.guild_id)
-        embed = _gm_panel_embed(theme)
-        view  = GmPanelView(self.bot, interaction.guild_id)
+        view  = GmPanelPagerView(self.bot, interaction.guild_id, theme)
+        embed = view._embed()
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
