@@ -695,6 +695,17 @@ class MoveDirectionView(discord.ui.View):
             except Exception:
                 pass
 
+        # Update the live global map with this movement arrow
+        try:
+            from cogs.map_cog import auto_update_map
+            await auto_update_map(
+                interaction.client,
+                interaction.guild_id,
+                movement_arrows=[(old_addr, new_addr, "player")],
+            )
+        except Exception:
+            pass
+
         embed = _move_embed(new_addr, sq["brigade"], sq["name"], chosen_steps=self.chosen_steps)
         new_view = MoveDirectionView(self.guild_id, max_steps=max_s,
                                      chosen_steps=self.chosen_steps)
