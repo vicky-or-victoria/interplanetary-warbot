@@ -4,7 +4,7 @@ Squadron cog v4 — fully button-driven, no player-facing slash commands.
 Players interact via:
   - EnlistView (enlistment board)        → brigade picker → deploy modal
   - UnitPanelView (My Unit button)       → stats + brigade-specific action buttons
-  - MoveDirectionView                    → directional pad + fast travel
+  - MoveDirectionView                    → directional pad (speed-capped per turn)
 """
 
 import random
@@ -72,26 +72,20 @@ async def build_unit_embed(sq, theme: dict, turn_count: int) -> discord.Embed:
 class UnitPanelView(discord.ui.View):
     """
     Ephemeral panel shown when a player presses 'My Unit'.
-    Row 0: Move  |  Fast Travel  |  Scavenge
+    Row 0: Move  |  Scavenge
     Row 1: Brigade specials (shown only if applicable)
-    Row 2: List Units  |  Disband
+    Row 2: List Units
     """
-    def __init__(self, guild_id: int, brigade: str, in_transit: bool):
+    def __init__(self, guild_id: int, brigade: str, in_transit: bool, move_exhausted: bool = False):
         super().__init__(timeout=300)
         self.guild_id = guild_id
 
         # Row 0 — always present
         move_btn = discord.ui.Button(
             label="📍 Move", style=discord.ButtonStyle.primary, row=0,
-            disabled=in_transit)
+            disabled=in_transit or move_exhausted)
         move_btn.callback = self._move
         self.add_item(move_btn)
-
-        travel_btn = discord.ui.Button(
-            label="🚀 Fast Travel", style=discord.ButtonStyle.primary, row=0,
-            disabled=in_transit)
-        travel_btn.callback = self._fast_travel
-        self.add_item(travel_btn)
 
         scav_btn = discord.ui.Button(
             label="🔍 Scavenge", style=discord.ButtonStyle.secondary, row=0)
@@ -114,21 +108,24 @@ class UnitPanelView(discord.ui.View):
         async with pool.acquire() as conn:
             planet_id = await get_active_planet_id(conn, self.guild_id)
             sq = await conn.fetchrow(
-                "SELECT hex_address, brigade, in_transit, name FROM squadrons "
+                "SELECT hex_address, brigade, in_transit, name, speed, hexes_moved_this_turn "
+                "FROM squadrons "
                 "WHERE guild_id=$1 AND planet_id=$2 AND owner_id=$3 AND is_active=TRUE LIMIT 1",
                 self.guild_id, planet_id, interaction.user.id)
         if not sq:
             await interaction.response.send_message("No active unit.", ephemeral=True); return
         if sq["in_transit"]:
             await interaction.response.send_message("Unit is already in transit.", ephemeral=True); return
+        budget    = sq["speed"] // 2
+        remaining = max(0, budget - sq["hexes_moved_this_turn"])
+        if remaining == 0:
+            await interaction.response.send_message(
+                f"⛔ Movement exhausted for this turn (budget: {budget} hexes).", ephemeral=True); return
         max_s = move_steps(sq["brigade"])
-        embed = _move_embed(sq["hex_address"], sq["brigade"], sq["name"])
+        embed = _move_embed(sq["hex_address"], sq["brigade"], sq["name"], remaining=remaining, budget=budget)
         await interaction.response.send_message(
-            embed=embed, view=MoveDirectionView(self.guild_id, max_steps=max_s, chosen_steps=max_s),
+            embed=embed, view=MoveDirectionView(self.guild_id, max_steps=max_s, chosen_steps=min(max_s, remaining)),
             ephemeral=True)
-
-    async def _fast_travel(self, interaction: discord.Interaction):
-        await interaction.response.send_modal(FastTravelModal(self.guild_id))
 
     async def _scavenge(self, interaction: discord.Interaction):
         await _do_scavenge(interaction, self.guild_id)
@@ -201,8 +198,10 @@ async def send_unit_panel(interaction: discord.Interaction, guild_id: int):
             "SELECT COUNT(*) FROM turn_history WHERE guild_id=$1 AND planet_id=$2",
             guild_id, planet_id) or 0
 
+    budget        = sq["speed"] // 2 if "speed" in sq.keys() else 5
+    move_exhausted = sq["hexes_moved_this_turn"] >= budget if "hexes_moved_this_turn" in sq.keys() else False
     embed = await build_unit_embed(sq, theme, turn_count)
-    view  = UnitPanelView(guild_id, sq["brigade"], sq["in_transit"])
+    view  = UnitPanelView(guild_id, sq["brigade"], sq["in_transit"], move_exhausted=move_exhausted)
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
@@ -571,7 +570,8 @@ class DeployModal(discord.ui.Modal, title="Deploy Your Unit"):
 # MOVE PAD
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _move_embed(hex_addr: str, brigade: str, unit_name: str, chosen_steps: int = None) -> discord.Embed:
+def _move_embed(hex_addr: str, brigade: str, unit_name: str,
+               chosen_steps: int = None, remaining: int = None, budget: int = None) -> discord.Embed:
     brig  = get_brigade(brigade)
     steps = move_steps(brigade)
     nbrs  = hex_neighbors(hex_addr)
@@ -583,13 +583,19 @@ def _move_embed(hex_addr: str, brigade: str, unit_name: str, chosen_steps: int =
         if steps > 1 else
         f"Moves **1** hex per step"
     )
+    budget_note = (
+        f"\n🏃 **{remaining}/{budget}** hexes remaining this turn"
+        if remaining is not None and budget is not None else ""
+    )
+    exhausted_note = "\n⛔ **Movement exhausted** — resets next turn." if remaining == 0 else ""
     return discord.Embed(
         title=f"📍 Move — {brig['emoji']} {unit_name}",
         description=(
-            f"At `{hex_addr}` · {step_note}\n"
+            f"At `{hex_addr}` · {step_note}"
+            f"{budget_note}{exhausted_note}\n"
             f"Adjacent: {', '.join(f'`{n}`' for n in nbrs) or 'none'}"
         ),
-        color=0x445588,
+        color=0x445588 if (remaining or 1) > 0 else 0x554444,
     )
 
 
@@ -627,14 +633,22 @@ class MoveDirectionView(discord.ui.View):
         "SE": 0,   # (1,  0) lower-right
     }
 
-    def __init__(self, guild_id: int, max_steps: int = 1, chosen_steps: int = 1):
+    def __init__(self, guild_id: int, max_steps: int = 1, chosen_steps: int = 1, remaining: int = None):
         super().__init__(timeout=120)
         self.guild_id     = guild_id
         self.max_steps    = max_steps
         self.chosen_steps = chosen_steps  # how many hexes the player has chosen to move
+        self.remaining    = remaining     # hexes left in turn budget (None = uncapped legacy)
 
-        # ── Step selector (row 3) — only when unit can move more than 1 hex ──
-        if max_steps > 1:
+        # Disable all direction buttons immediately if movement is exhausted
+        exhausted = remaining is not None and remaining <= 0
+        for btn_attr in ("nw", "n", "ne", "sw", "s", "se"):
+            btn = getattr(self, btn_attr, None)
+            if btn is not None:
+                btn.disabled = exhausted
+
+        # ── Step selector (row 2) — only when unit can move more than 1 hex ──
+        if max_steps > 1 and not exhausted:
             select = StepSelect(max_steps=max_steps, current=chosen_steps)
             select.row = 2
             self.add_item(select)
@@ -652,7 +666,8 @@ class MoveDirectionView(discord.ui.View):
         async with pool.acquire() as conn:
             planet_id = await get_active_planet_id(conn, interaction.guild_id)
             sq = await conn.fetchrow(
-                "SELECT id, name, brigade, hex_address, in_transit FROM squadrons "
+                "SELECT id, name, brigade, hex_address, in_transit, speed, hexes_moved_this_turn "
+                "FROM squadrons "
                 "WHERE guild_id=$1 AND planet_id=$2 AND owner_id=$3 AND is_active=TRUE LIMIT 1",
                 interaction.guild_id, planet_id, interaction.user.id)
             if not sq:
@@ -662,8 +677,16 @@ class MoveDirectionView(discord.ui.View):
                 await interaction.followup.send("Unit is in transit.", ephemeral=True)
                 return
 
+            budget    = sq["speed"] // 2
+            remaining = max(0, budget - sq["hexes_moved_this_turn"])
+            if remaining <= 0:
+                await interaction.followup.send(
+                    f"⛔ Movement exhausted for this turn (budget: {budget} hexes). Resets next turn.",
+                    ephemeral=True)
+                return
+
             max_s    = move_steps(sq["brigade"])
-            steps    = min(self.chosen_steps, max_s)
+            steps    = min(self.chosen_steps, max_s, remaining)  # never exceed remaining budget
             old_addr = sq["hex_address"]
             new_addr = old_addr
 
@@ -680,10 +703,13 @@ class MoveDirectionView(discord.ui.View):
                     "Cannot move that direction — grid edge.", ephemeral=True)
                 return
 
+            actual_steps = hex_distance(old_addr, new_addr) if new_addr != old_addr else steps
             await conn.execute(
                 "UPDATE squadrons SET hex_address=$1, is_dug_in=FALSE, "
-                "artillery_armed=FALSE WHERE id=$2",
-                new_addr, sq["id"])
+                "artillery_armed=FALSE, "
+                "hexes_moved_this_turn=hexes_moved_this_turn+$2 WHERE id=$3",
+                new_addr, actual_steps, sq["id"])
+            new_remaining = max(0, remaining - actual_steps)
 
             # Persist this arrow so it survives across subsequent move actions
             await conn.execute(
@@ -709,6 +735,8 @@ class MoveDirectionView(discord.ui.View):
                     to_addr   = new_addr,
                     unit_name = sq["name"],
                     planet_id = planet_id,
+                    remaining = new_remaining,
+                    budget    = budget,
                 )
             except Exception:
                 pass
@@ -724,14 +752,15 @@ class MoveDirectionView(discord.ui.View):
         except Exception:
             pass
 
-        embed = _move_embed(new_addr, sq["brigade"], sq["name"], chosen_steps=self.chosen_steps)
+        embed = _move_embed(new_addr, sq["brigade"], sq["name"],
+                          chosen_steps=min(self.chosen_steps, new_remaining),
+                          remaining=new_remaining, budget=budget)
         new_view = MoveDirectionView(self.guild_id, max_steps=max_s,
-                                     chosen_steps=self.chosen_steps)
+                                     chosen_steps=min(self.chosen_steps, max(1, new_remaining)),
+                                     remaining=new_remaining)
         if map_buf:
             file = discord.File(map_buf, filename="movement.png")
             embed.set_image(url="attachment://movement.png")
-            # After deferring we must use followup — edit_message is no longer available.
-            # Send a new ephemeral message containing the updated pad + movement map.
             await interaction.followup.send(embed=embed, view=new_view, file=file, ephemeral=True)
         else:
             await interaction.followup.send(embed=embed, view=new_view, ephemeral=True)
@@ -758,10 +787,6 @@ class MoveDirectionView(discord.ui.View):
     async def se(self, i, b): await self._do_move(i, "SE")
 
     # Row 3 — action buttons (row 2 is reserved for StepSelect when present)
-    @discord.ui.button(label="🚀 Fast Travel", style=discord.ButtonStyle.danger, row=3)
-    async def fast_travel(self, i, b):
-        await i.response.send_modal(FastTravelModal(self.guild_id))
-
     @discord.ui.button(label="✓ Done", style=discord.ButtonStyle.success, row=3)
     async def done(self, i, b):
         await i.response.edit_message(
@@ -801,43 +826,6 @@ class StepSelect(discord.ui.Select):
         )
         await interaction.response.edit_message(view=new_view)
 
-
-class FastTravelModal(discord.ui.Modal, title="Fast Travel"):
-    destination = discord.ui.TextInput(
-        label="Destination Hex",
-        placeholder="e.g. 5,-3",
-        max_length=12,
-        required=True,
-    )
-
-    def __init__(self, guild_id: int):
-        super().__init__()
-        self.guild_id = guild_id
-
-    async def on_submit(self, interaction: discord.Interaction):
-        dest = str(self.destination).strip()
-        if not is_valid(dest):
-            await interaction.response.send_message(f"Invalid hex `{dest}`.", ephemeral=True); return
-        pool = await get_pool()
-        async with pool.acquire() as conn:
-            planet_id = await get_active_planet_id(conn, self.guild_id)
-            sq = await conn.fetchrow(
-                "SELECT id, name, brigade, hex_address, in_transit FROM squadrons "
-                "WHERE guild_id=$1 AND planet_id=$2 AND owner_id=$3 AND is_active=TRUE LIMIT 1",
-                self.guild_id, planet_id, interaction.user.id)
-            if not sq or sq["in_transit"]:
-                await interaction.response.send_message("No available unit.", ephemeral=True); return
-            dist  = hex_distance(sq["hex_address"], dest)
-            turns = (1 if can_direct_insert(sq["brigade"])
-                     else transit_turns(sq["brigade"]) + max(0, (dist - 3) // 3))
-            await conn.execute(
-                "UPDATE squadrons SET in_transit=TRUE, transit_destination=$1, "
-                "transit_turns_left=$2, is_dug_in=FALSE, artillery_armed=FALSE WHERE id=$3",
-                dest, turns, sq["id"])
-        brig = get_brigade(sq["brigade"])
-        await interaction.response.send_message(
-            f"{brig['emoji']} **{sq['name']}** en route to `{dest}` — **{turns} turn(s)**.",
-            ephemeral=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
