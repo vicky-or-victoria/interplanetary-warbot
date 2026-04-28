@@ -185,7 +185,7 @@ def render_planet_map(
                           if cnt > 0]
                 if not badges:
                     # legacy fallback: plain blue square with count
-                    badges = [("##", p_ct)]
+                    badges = [("XX", p_ct)]
 
                 total_badge_w = len(badges) * badge_w + (len(badges) - 1) * gap
                 # Centre the row of badges under the hex
@@ -201,7 +201,7 @@ def render_planet_map(
                         fill=(shade, shade + 20, 200, 255),
                         outline=(180, 200, 255, 255), width=1)
                     try:
-                        # Icon text (e.g. "##", ">>", "[]")
+                        # Icon symbol (e.g. "⚔", "✈", "⬢")
                         bb  = draw.textbbox((0, 0), icon, font=f_pip)
                         iw  = (bb[2] - bb[0]) / 2
                         ih  = (bb[3] - bb[1]) / 2
@@ -703,7 +703,7 @@ def render_movement_map(
                 badges = [(brigade_ascii_icon(bk), cnt)
                           for bk, cnt in sorted(brigades_map.items()) if cnt > 0]
                 if not badges:
-                    badges = [("##", p_ct)]
+                    badges = [("XX", p_ct)]
                 total_badge_w = len(badges) * badge_w + (len(badges) - 1) * gap
                 bx_start = int(cx - total_badge_w / 2)
                 for bi, (icon, cnt) in enumerate(badges):
