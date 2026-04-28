@@ -108,7 +108,7 @@ class MapCog(commands.Cog):
 
 # ── Auto-update helpers (called by turn engine + admin cog) ───────────────────
 
-async def auto_update_map(bot, guild_id: int) -> bool:
+async def auto_update_map(bot, guild_id: int, movement_arrows: list = None) -> bool:
     pool = await get_pool()
     async with pool.acquire() as conn:
         cfg = await conn.fetchrow(
@@ -119,7 +119,7 @@ async def auto_update_map(bot, guild_id: int) -> bool:
         theme = await get_theme(conn, guild_id)
         try:
             from utils.map_render import render_map_for_guild
-            buf = await render_map_for_guild(guild_id, conn)
+            buf = await render_map_for_guild(guild_id, conn, movement_arrows=movement_arrows)
         except Exception as e:
             import logging
             logging.getLogger(__name__).warning(f"Map render error guild {guild_id}: {e}")
