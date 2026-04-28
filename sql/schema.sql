@@ -153,12 +153,64 @@ CREATE TABLE IF NOT EXISTS player_economy (
     UNIQUE(guild_id, owner_id)
 );
 
+CREATE TABLE IF NOT EXISTS commander_profiles (
+    guild_id            BIGINT      NOT NULL,
+    owner_id            BIGINT      NOT NULL,
+    display_name        TEXT        NOT NULL DEFAULT 'Commandant',
+    selected_banner_key TEXT        DEFAULT NULL,
+    recovery_status     TEXT        DEFAULT NULL,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (guild_id, owner_id)
+);
+
+CREATE TABLE IF NOT EXISTS cosmetic_banners (
+    guild_id   BIGINT      NOT NULL,
+    banner_key TEXT        NOT NULL,
+    name       TEXT        NOT NULL,
+    image_url  TEXT        NOT NULL,
+    created_by BIGINT      DEFAULT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (guild_id, banner_key)
+);
+
+CREATE TABLE IF NOT EXISTS commander_banners (
+    guild_id   BIGINT      NOT NULL,
+    owner_id   BIGINT      NOT NULL,
+    banner_key TEXT        NOT NULL,
+    granted_by BIGINT      DEFAULT NULL,
+    granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (guild_id, owner_id, banner_key)
+);
+
+CREATE TABLE IF NOT EXISTS cosmetic_badges (
+    guild_id   BIGINT      NOT NULL,
+    badge_key  TEXT        NOT NULL,
+    symbol     TEXT        NOT NULL,
+    text       TEXT        NOT NULL,
+    created_by BIGINT      DEFAULT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (guild_id, badge_key)
+);
+
+CREATE TABLE IF NOT EXISTS commander_badges (
+    guild_id   BIGINT      NOT NULL,
+    owner_id   BIGINT      NOT NULL,
+    badge_key  TEXT        NOT NULL,
+    granted_by BIGINT      DEFAULT NULL,
+    granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (guild_id, owner_id, badge_key)
+);
+
 CREATE INDEX IF NOT EXISTS idx_hexes_gp    ON hexes(guild_id, planet_id);
 CREATE INDEX IF NOT EXISTS idx_sq_gp       ON squadrons(guild_id, planet_id);
 CREATE INDEX IF NOT EXISTS idx_enemy_gp    ON enemy_units(guild_id, planet_id);
 CREATE INDEX IF NOT EXISTS idx_combat_g    ON combat_log(guild_id);
 CREATE INDEX IF NOT EXISTS idx_planets_g   ON planets(guild_id);
 CREATE INDEX IF NOT EXISTS idx_terrain_gp  ON hex_terrain(guild_id, planet_id);
+CREATE INDEX IF NOT EXISTS idx_profiles_g  ON commander_profiles(guild_id);
+CREATE INDEX IF NOT EXISTS idx_cmd_banners ON commander_banners(guild_id, owner_id);
+CREATE INDEX IF NOT EXISTS idx_cmd_badges  ON commander_badges(guild_id, owner_id);
 
 -- Migration guards
 DO $$ BEGIN ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS enlist_channel_id  BIGINT DEFAULT NULL; END $$;
@@ -206,6 +258,8 @@ DO $$ BEGIN ALTER TABLE squadrons    ADD COLUMN IF NOT EXISTS hp                
 DO $$ BEGIN ALTER TABLE enemy_units  ADD COLUMN IF NOT EXISTS hp                    INT    NOT NULL DEFAULT 100; END $$;
 DO $$ BEGIN ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS contract_name         TEXT   DEFAULT NULL; END $$;
 DO $$ BEGIN ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS announcement_channel_id BIGINT DEFAULT NULL; END $$;
+DO $$ BEGIN ALTER TABLE commander_profiles ADD COLUMN IF NOT EXISTS selected_banner_key TEXT DEFAULT NULL; END $$;
+DO $$ BEGIN ALTER TABLE commander_profiles ADD COLUMN IF NOT EXISTS recovery_status TEXT DEFAULT NULL; END $$;
 -- Migrate existing squadrons that still have the old 3-HP default to 100
 DO $$ BEGIN UPDATE squadrons SET hp=100 WHERE hp <= 3; END $$;
 -- Migrate existing enemy_units that have no hp (NULL or 0) to 100
