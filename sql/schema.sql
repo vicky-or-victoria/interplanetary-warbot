@@ -91,6 +91,7 @@ CREATE TABLE IF NOT EXISTS squadrons (
     is_dug_in           BOOLEAN     NOT NULL DEFAULT FALSE,
     artillery_armed     BOOLEAN     NOT NULL DEFAULT FALSE,
     hp                  INT         NOT NULL DEFAULT 100,
+    hexes_moved_this_turn INT         NOT NULL DEFAULT 0,
     UNIQUE(guild_id, planet_id, owner_id, name)
 );
 
@@ -223,6 +224,9 @@ CREATE TABLE IF NOT EXISTS movement_arrows (
 );
 
 CREATE INDEX IF NOT EXISTS idx_arrows_gp ON movement_arrows(guild_id, planet_id);
+
+-- v5: per-turn hex movement tracking
+DO $$ BEGIN ALTER TABLE squadrons ADD COLUMN IF NOT EXISTS hexes_moved_this_turn INT NOT NULL DEFAULT 0; END $$;
 
 -- Migration guard for existing databases
 DO $$ BEGIN
