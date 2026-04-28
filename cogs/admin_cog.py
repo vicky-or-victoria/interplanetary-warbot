@@ -447,17 +447,22 @@ class GmPanelView(discord.ui.View):
         if not await self._check(i): return
         await i.response.send_modal(_SpawnEnemyModal())
 
-    @discord.ui.button(label="➡ Move Enemy", style=discord.ButtonStyle.primary, row=1)
+    @discord.ui.button(label="👾 Bulk Spawn", style=discord.ButtonStyle.danger, row=1)
+    async def bulk_spawn_enemy(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await self._check(i): return
+        await i.response.send_modal(_BulkSpawnEnemyModal())
+
+    @discord.ui.button(label="➡ Move Enemy", style=discord.ButtonStyle.primary, row=2)
     async def move_enemy(self, i: discord.Interaction, b: discord.ui.Button):
         if not await self._check(i): return
         await i.response.send_modal(_MoveEnemyModal())
 
-    @discord.ui.button(label="📦 Bulk Move", style=discord.ButtonStyle.primary, row=1)
+    @discord.ui.button(label="📦 Bulk Move", style=discord.ButtonStyle.primary, row=2)
     async def bulk_move_enemy(self, i: discord.Interaction, b: discord.ui.Button):
         if not await self._check(i): return
         await i.response.send_modal(_BulkMoveEnemyModal())
 
-    @discord.ui.button(label="📋 List Enemies", style=discord.ButtonStyle.secondary, row=1)
+    @discord.ui.button(label="📋 List Enemies", style=discord.ButtonStyle.secondary, row=2)
     async def list_enemies(self, i: discord.Interaction, b: discord.ui.Button):
         if not await self._check(i): return
         pool = await get_pool()
@@ -465,7 +470,7 @@ class GmPanelView(discord.ui.View):
             theme     = await get_theme(conn, i.guild_id)
             planet_id = await get_active_planet_id(conn, i.guild_id)
             rows      = await conn.fetch(
-                "SELECT id, unit_type, hex_address, attack, defense, is_active "
+                "SELECT id, unit_type, hex_address, attack, defense, hp, is_active "
                 "FROM enemy_units WHERE guild_id=$1 AND planet_id=$2 AND is_active=TRUE "
                 "ORDER BY id",
                 i.guild_id, planet_id)
@@ -482,7 +487,7 @@ class GmPanelView(discord.ui.View):
             move_str = f" → `{queued_map[r['id']]}`" if r["id"] in queued_map else ""
             lines.append(
                 f"**ID {r['id']}** `{r['hex_address']}`{move_str} — "
-                f"{r['unit_type']} (ATK:{r['attack']} DEF:{r['defense']})"
+                f"{r['unit_type']} (ATK:{r['attack']} DEF:{r['defense']} HP:{r['hp'] or 100})"
             )
         description = "\n".join(lines)
         embed = discord.Embed(
@@ -493,12 +498,12 @@ class GmPanelView(discord.ui.View):
 
     # ── Row 2: Misc ───────────────────────────────────────────────────────────
 
-    @discord.ui.button(label="☠ Remove Enemy", style=discord.ButtonStyle.danger, row=2)
+    @discord.ui.button(label="☠ Remove Enemy", style=discord.ButtonStyle.danger, row=3)
     async def remove_enemy(self, i: discord.Interaction, b: discord.ui.Button):
         if not await self._check(i): return
         await i.response.send_modal(_RemoveEnemyModal())
 
-    @discord.ui.button(label="🗺 GM Map", style=discord.ButtonStyle.success, row=2)
+    @discord.ui.button(label="🗺 GM Map", style=discord.ButtonStyle.success, row=3)
     async def gm_map(self, i: discord.Interaction, b: discord.ui.Button):
         if not await self._check(i): return
         await i.response.defer(ephemeral=True, thinking=True)
@@ -1042,11 +1047,17 @@ class _ContractOutcomeModal(discord.ui.Modal, title="Conclude Contract"):
 class _SpawnEnemyModal(discord.ui.Modal, title="Spawn Enemy Unit"):
     unit_type   = discord.ui.TextInput(label="Unit Type", placeholder="e.g. Scout", max_length=40)
     hex_address = discord.ui.TextInput(label="Hex Address", placeholder="e.g. 6,-3", max_length=12)
+    hp_input    = discord.ui.TextInput(
+        label="HP (default 100)", placeholder="e.g. 100", max_length=5, required=False)
 
     async def on_submit(self, i: discord.Interaction):
         addr = str(self.hex_address).strip()
         if not is_valid(addr):
             await i.response.send_message(f"Invalid hex `{addr}`.", ephemeral=True); return
+        try:
+            hp = max(1, int(str(self.hp_input).strip())) if str(self.hp_input).strip() else 100
+        except ValueError:
+            hp = 100
         v = lambda: random.randint(-2, 2)
         pool = await get_pool()
         async with pool.acquire() as conn:
@@ -1054,12 +1065,51 @@ class _SpawnEnemyModal(discord.ui.Modal, title="Spawn Enemy Unit"):
             await conn.execute(
                 "INSERT INTO enemy_units "
                 "(guild_id, planet_id, unit_type, hex_address, "
-                " attack, defense, speed, morale, supply, recon) "
-                "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
+                " attack, defense, speed, morale, supply, recon, hp) "
+                "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
                 i.guild_id, planet_id, str(self.unit_type).strip()[:40], addr,
-                10+v(), 10+v(), 10+v(), 10+v(), 10+v(), 10+v())
+                10+v(), 10+v(), 10+v(), 10+v(), 10+v(), 10+v(), hp)
         await i.response.send_message(
-            f"👾 **{str(self.unit_type).strip()}** spawned at `{addr}`.", ephemeral=True)
+            f"👾 **{str(self.unit_type).strip()}** spawned at `{addr}` with **{hp} HP**.", ephemeral=True)
+
+
+class _BulkSpawnEnemyModal(discord.ui.Modal, title="Bulk Spawn Enemy Units"):
+    unit_type   = discord.ui.TextInput(label="Unit Type", placeholder="e.g. Scout", max_length=40)
+    hex_address = discord.ui.TextInput(
+        label="Hex Address", placeholder="e.g. 6,-3", max_length=12)
+    count_input = discord.ui.TextInput(
+        label="Number of units (1–20)", placeholder="e.g. 5", max_length=3)
+    hp_input    = discord.ui.TextInput(
+        label="HP per unit (default 100)", placeholder="e.g. 100", max_length=5, required=False)
+
+    async def on_submit(self, i: discord.Interaction):
+        addr = str(self.hex_address).strip()
+        if not is_valid(addr):
+            await i.response.send_message(f"Invalid hex `{addr}`.", ephemeral=True); return
+        try:
+            count = max(1, min(20, int(str(self.count_input).strip())))
+        except ValueError:
+            await i.response.send_message("Count must be a number between 1 and 20.", ephemeral=True); return
+        try:
+            hp = max(1, int(str(self.hp_input).strip())) if str(self.hp_input).strip() else 100
+        except ValueError:
+            hp = 100
+        unit_name = str(self.unit_type).strip()[:40]
+        v = lambda: random.randint(-2, 2)
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            planet_id = await get_active_planet_id(conn, i.guild_id)
+            for _ in range(count):
+                await conn.execute(
+                    "INSERT INTO enemy_units "
+                    "(guild_id, planet_id, unit_type, hex_address, "
+                    " attack, defense, speed, morale, supply, recon, hp) "
+                    "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+                    i.guild_id, planet_id, unit_name, addr,
+                    10+v(), 10+v(), 10+v(), 10+v(), 10+v(), 10+v(), hp)
+        await i.response.send_message(
+            f"👾 **{count}× {unit_name}** spawned at `{addr}` with **{hp} HP** each.",
+            ephemeral=True)
 
 
 class _MoveEnemyModal(discord.ui.Modal, title="Queue Enemy Move"):
