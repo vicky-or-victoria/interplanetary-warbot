@@ -618,12 +618,12 @@ class MoveDirectionView(discord.ui.View):
     # Visual mapping on the rendered flat-top map:
     #   NW=(0,-1), N=(1,-1), NE=(1,0), SW=(-1,0), S=(-1,1), SE=(0,1)
     _DIR = {
-        "NW": 4,   # (0,-1)  upper-left
-        "N":  5,   # (1,-1)  straight up
-        "NE": 0,   # (1, 0)  upper-right
-        "SW": 3,   # (-1,0)  lower-left
-        "S":  2,   # (-1,1)  straight down
-        "SE": 1,   # (0, 1)  lower-right
+        "NW": 3,   # (-1, 0) upper-left
+        "N":  4,   # (0, -1) straight up
+        "NE": 5,   # (1, -1) upper-right
+        "SW": 2,   # (-1,+1) lower-left
+        "S":  1,   # (0, +1) straight down
+        "SE": 0,   # (1,  0) lower-right
     }
 
     def __init__(self, guild_id: int, max_steps: int = 1, chosen_steps: int = 1):
