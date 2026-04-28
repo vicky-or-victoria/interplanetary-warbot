@@ -23,6 +23,7 @@ import discord
 
 from utils.db import get_pool, get_theme, get_active_planet_id
 from utils.combat import resolve_combat, CombatUnit
+from utils.profiles import mark_recovering
 from utils.brigades import (
     transit_turns as brigade_transit, supply_drain as brigade_drain,
     move_steps as brigade_steps, can_direct_insert,
@@ -637,9 +638,11 @@ class TurnEngine:
                             await conn.execute(
                                 "UPDATE squadrons SET hp=0, is_active=FALSE WHERE id=$1",
                                 pu["id"])
+                            await mark_recovering(
+                                conn, guild_id, pu["owner_id"], pu["owner_name"])
                             summaries.append(
                                 f"💀 **{pu['owner_name']}'s {pu['name']}** was **destroyed** "
-                                f"— they can re-enlist next contract.")
+                                f"— their command is recovering from total loss of unit cohesion.")
                         else:
                             await conn.execute(
                                 "UPDATE squadrons SET hp=$1 WHERE id=$2",
