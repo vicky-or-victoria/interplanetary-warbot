@@ -48,6 +48,19 @@ _UNIT_ROSTERS = {
 
 _MAX_SPAWNS = 2
 
+REPORT_SECTIONS = [
+    ("movement", "Movement"),
+    ("combat", "Contact / Combat"),
+    ("casualties", "Casualties"),
+    ("supply", "Supply"),
+    ("territory", "Territory"),
+    ("other", "Other Signals"),
+]
+
+REPORT_FIELD_LIMIT = 1000
+REPORT_EMBED_LIMIT = 5600
+REPORT_CONTINUED_TITLE = "continued"
+
 
 def _roster(enemy_type: str) -> list:
     return _UNIT_ROSTERS.get(enemy_type, _UNIT_ROSTERS["Unknown"])
@@ -58,6 +71,160 @@ def _rand_stats(aggression: int = 0) -> dict:
     b = 9 + aggression
     return dict(attack=b+v(), defense=b+v(), speed=b+v(),
                 morale=b+v(), supply=b+v(), recon=b+v())
+
+
+def _clean_report_line(line: str) -> str:
+    """Keep report lines compact and readable inside Discord fields."""
+    cleaned = " ".join(str(line).split())
+    cleaned = cleaned.replace("->", "->").replace("--", "-")
+    cleaned = "".join(ch if ord(ch) < 128 else " " for ch in cleaned)
+    cleaned = " ".join(cleaned.split())
+    while cleaned and not (cleaned[0].isalnum() or cleaned[0] in ("*", "`", "#")):
+        cleaned = cleaned[1:].lstrip()
+    return cleaned
+
+
+def _split_report_line(line: str, limit: int = REPORT_FIELD_LIMIT) -> list:
+    if len(line) <= limit:
+        return [line]
+    chunks = []
+    remaining = line
+    while len(remaining) > limit:
+        cut = remaining.rfind(" ", 0, limit)
+        if cut < limit // 2:
+            cut = limit
+        chunks.append(remaining[:cut].rstrip())
+        remaining = remaining[cut:].lstrip()
+    if remaining:
+        chunks.append(remaining)
+    return chunks
+
+
+def _report_section(line: str) -> str:
+    text = line.lower()
+    if any(token in text for token in ("arrived at", "moved to", "fell back", "routed from")):
+        return "movement"
+    if any(token in text for token in ("critically low on supply", "supply")):
+        return "supply"
+    if any(token in text for token in ("destroyed", "damage", " hp", "remaining", "splash")):
+        return "casualties"
+    if any(token in text for token in ("routed", "control", "captured", "secured")):
+        return "territory"
+    if ":" in line or any(token in text for token in ("combat", "engaged", "attack", "defend", "wins")):
+        return "combat"
+    return "other"
+
+
+def _report_tag(section: str) -> str:
+    return {
+        "movement": "MOVE",
+        "combat": "CONTACT",
+        "casualties": "LOSS",
+        "supply": "SUPPLY",
+        "territory": "TERRAIN",
+        "other": "SIGNAL",
+    }.get(section, "SIGNAL")
+
+
+def _section_report_lines(summaries: list) -> dict:
+    sections = {key: [] for key, _ in REPORT_SECTIONS}
+    for raw in summaries:
+        line = _clean_report_line(raw)
+        section = _report_section(line)
+        sections.setdefault(section, []).append(f"`{_report_tag(section)}` {line}")
+    return sections
+
+
+def _append_field_chunks(embeds, section_title: str, lines: list, color: int):
+    if not lines:
+        return
+
+    chunk = []
+    chunk_len = 0
+    for raw_line in lines:
+        for line in _split_report_line(raw_line):
+            add_len = len(line) + 1
+            if chunk and chunk_len + add_len > REPORT_FIELD_LIMIT:
+                _append_report_field(embeds, section_title, "\n".join(chunk), color)
+                section_title = f"{section_title} (cont.)"
+                chunk = []
+                chunk_len = 0
+            chunk.append(line)
+            chunk_len += add_len
+
+    if chunk:
+        _append_report_field(embeds, section_title, "\n".join(chunk), color)
+
+
+def _report_loss_counts(sections: dict, theme: dict) -> tuple:
+    enemy_name = theme.get("enemy_faction", "Enemy").lower()
+    enemy_unit = theme.get("enemy_unit", "Enemy").lower()
+    enemy_losses = 0
+    player_losses = 0
+    for line in sections.get("casualties", []):
+        text = line.lower()
+        if "destroyed" not in text:
+            continue
+        if enemy_name in text or enemy_unit in text or "[enemy" in text:
+            enemy_losses += 1
+        else:
+            player_losses += 1
+    return player_losses, enemy_losses
+
+
+def _append_report_field(embeds, name: str, value: str, color: int):
+    current = embeds[-1]
+    projected = len(current.title or "") + len(current.description or "") + len(name) + len(value)
+    projected += sum(len(f.name or "") + len(f.value or "") for f in current.fields)
+    if current.fields and projected > REPORT_EMBED_LIMIT:
+        continued = discord.Embed(
+            title=f"{current.title} ({REPORT_CONTINUED_TITLE})",
+            color=color,
+        )
+        if current.footer and current.footer.text:
+            continued.set_footer(text=current.footer.text)
+        embeds.append(continued)
+        current = continued
+    current.add_field(name=name, value=value or "No entries.", inline=False)
+
+
+def _build_turn_report_embeds(planet_name: str, turn_num: int, summaries: list, theme: dict) -> list:
+    bot_name = theme.get("bot_name", "WARBOT")
+    color = theme.get("color", 0xAA2222)
+    sections = _section_report_lines(summaries)
+
+    total_events = len(summaries)
+    combat_events = len(sections.get("combat", []))
+    casualty_events = len(sections.get("casualties", []))
+    movement_events = len(sections.get("movement", []))
+    supply_events = len(sections.get("supply", []))
+    player_losses, enemy_losses = _report_loss_counts(sections, theme)
+
+    description = (
+        f"**Contract Theatre:** {planet_name}\n"
+        f"**Turn:** {turn_num}\n"
+        f"**Events:** {total_events} total | {movement_events} movement | "
+        f"{combat_events} combat | {casualty_events} casualty | {supply_events} supply\n"
+        f"**Losses:** {player_losses} friendly | {enemy_losses} hostile\n"
+        f"**Signal Integrity:** stable"
+    )
+
+    embed = discord.Embed(
+        title=f"{bot_name} | Turn {turn_num} After Action Report",
+        color=color,
+        description=description,
+    )
+    embed.set_footer(text=f"{bot_name} | {theme.get('flavor_text','')}")
+    embeds = [embed]
+
+    if not summaries:
+        _append_report_field(embeds, "Quiet Sectors", "No activity this turn.", color)
+        return embeds
+
+    for key, title in REPORT_SECTIONS:
+        _append_field_chunks(embeds, title, sections.get(key, []), color)
+
+    return embeds
 
 
 class TurnEngine:
@@ -499,11 +666,5 @@ class TurnEngine:
                     break
         if not channel:
             return
-        embed = discord.Embed(
-            title=f"⚔ Turn {turn_num} — {planet_name} After Action Report",
-            color=theme.get("color", 0xAA2222),
-            description="\n".join(summaries) if summaries else "No activity this turn.",
-        )
-        embed.set_footer(
-            text=f"{theme.get('bot_name','WARBOT')} — {theme.get('flavor_text','')}")
-        await channel.send(embed=embed)
+        for embed in _build_turn_report_embeds(planet_name, turn_num, summaries, theme):
+            await channel.send(embed=embed)
