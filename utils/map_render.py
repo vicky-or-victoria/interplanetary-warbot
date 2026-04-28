@@ -24,17 +24,11 @@ BRIGADE_COLORS = {
     "special_ops":  (200, 140, 255),
 }
 
-BRIGADE_MARKER_LABELS = {
-    "infantry":     "IN",
-    "armoured":     "AR",
-    "artillery":    "AT",
-    "aerial":       "AI",
-    "ranger":       "RG",
-    "engineering":  "EN",
-    "special_ops":  "SO",
-}
-
 BRIGADE_ORDER = {key: idx for idx, key in enumerate(BRIGADES.keys())}
+
+PLAYER_MARKER_FILL = (35, 72, 170)
+PLAYER_MARKER_EDGE = (170, 210, 255)
+ENEMY_MARKER_FILL = (205, 35, 35)
 
 # ── Fog of War ─────────────────────────────────────────────────────────────────
 # Enemy units are only visible to players if they are within this many hexes
@@ -111,103 +105,114 @@ def _hex_label_positions(cx, cy, occupied=False):
     }
 
 
-def _draw_player_markers(draw, cx, cy, brigades_map, player_count, font):
-    badges = _brigade_badges(brigades_map, player_count)
-    if not badges:
-        return (0, 0)
+def _draw_brigade_icon(draw, brigade_key, box, fill):
+    x1, y1, x2, y2 = box
+    w = x2 - x1
+    h = y2 - y1
+    cx = (x1 + x2) / 2
+    cy = (y1 + y2) / 2
+    stroke = max(1, int(min(w, h) / 5))
+    dark = (18, 18, 18, 255)
 
-    badge_w = 18
-    badge_h = 16
-    gap = 2
-    max_per_row = 3
-    rows = [badges[i:i + max_per_row] for i in range(0, len(badges), max_per_row)]
-    total_h = len(rows) * badge_h + (len(rows) - 1) * gap
-    y_start = int(cy + HEX_SIZE * 0.56 - total_h / 2)
-    max_w = 0
-
-    for row_idx, row in enumerate(rows):
-        row_w = len(row) * badge_w + (len(row) - 1) * gap
-        max_w = max(max_w, row_w)
-        x_start = int(cx - row_w / 2)
-        y = y_start + row_idx * (badge_h + gap)
-
-        for col_idx, (brigade_key, cnt) in enumerate(row):
-            x = x_start + col_idx * (badge_w + gap)
-            color = BRIGADE_COLORS.get(brigade_key, (200, 200, 200))
-            label = BRIGADE_MARKER_LABELS.get(brigade_key, "??")
-
-            draw.rectangle(
-                (x, y, x + badge_w, y + badge_h),
-                fill=(18, 28, 68, 255),
-                outline=(170, 205, 255, 255),
-                width=1,
-            )
-            draw.rectangle(
-                (x + 2, y + 2, x + badge_w - 2, y + badge_h - 2),
-                fill=(*color, 255),
-            )
-            _centered_text(
-                draw,
-                (x + 1, y + 1, x + badge_w - 1, y + badge_h - 1),
-                label,
-                font,
-                fill=(255, 255, 255, 255),
-                outline=(0, 0, 0, 240),
-            )
-
-            if cnt > 1:
-                cnt_str = str(cnt)
-                try:
-                    cb = draw.textbbox((0, 0), cnt_str, font=font)
-                    cw = cb[2] - cb[0]
-                    ch = cb[3] - cb[1]
-                    pill_x = x + badge_w - cw - 4
-                    pill_y = y - 1
-                    draw.rectangle(
-                        (pill_x - 1, pill_y, x + badge_w + 1, pill_y + ch + 2),
-                        fill=(20, 20, 20, 235),
-                        outline=(255, 255, 190, 255),
-                        width=1,
-                    )
-                    draw.text(
-                        (pill_x, pill_y),
-                        cnt_str,
-                        font=font,
-                        fill=(255, 255, 190, 255),
-                    )
-                except Exception:
-                    pass
-
-    return (max_w, total_h)
+    if brigade_key in ("armoured", "armor"):
+        draw.ellipse((x1 + w*.08, y1 + h*.28, x2 - w*.08, y2 - h*.20), fill=fill, outline=dark, width=stroke)
+        draw.line((x1 + w*.25, cy, x2 - w*.25, cy), fill=dark, width=stroke)
+    elif brigade_key == "infantry":
+        draw.line((x1 + w*.18, y1 + h*.18, x2 - w*.18, y2 - h*.18), fill=fill, width=stroke)
+        draw.line((x2 - w*.18, y1 + h*.18, x1 + w*.18, y2 - h*.18), fill=fill, width=stroke)
+    elif brigade_key == "artillery":
+        draw.ellipse((x1 + w*.22, y1 + h*.18, x2 - w*.22, y2 - h*.18), outline=fill, width=stroke)
+        draw.line((x1 + w*.12, cy, x2 - w*.12, cy), fill=fill, width=stroke)
+    elif brigade_key in ("ranger", "recon"):
+        draw.line((x1 + w*.15, y2 - h*.25, cx, y1 + h*.20), fill=fill, width=stroke)
+        draw.line((cx, y1 + h*.20, x2 - w*.15, y2 - h*.25), fill=fill, width=stroke)
+    elif brigade_key in ("command", "hq"):
+        pole_x = x1 + w*.28
+        draw.line((pole_x, y1 + h*.15, pole_x, y2 - h*.15), fill=fill, width=stroke)
+        draw.polygon([(pole_x, y1 + h*.18), (x2 - w*.12, y1 + h*.28), (pole_x, y1 + h*.50)], fill=fill)
+    elif brigade_key == "engineering":
+        draw.rectangle((x1 + w*.18, y1 + h*.45, x2 - w*.18, y2 - h*.18), fill=fill, outline=dark, width=stroke)
+        draw.line((x1 + w*.26, y1 + h*.22, x2 - w*.18, y2 - h*.18), fill=fill, width=stroke)
+    elif brigade_key == "aerial":
+        draw.polygon([(cx, y1 + h*.12), (x2 - w*.12, y2 - h*.22), (cx, y2 - h*.42), (x1 + w*.12, y2 - h*.22)], fill=fill, outline=dark)
+    elif brigade_key == "special_ops":
+        draw.polygon([(cx, y1 + h*.10), (x2 - w*.12, cy), (cx, y2 - h*.10), (x1 + w*.12, cy)], fill=fill, outline=dark)
+    else:
+        draw.polygon([(cx, y1 + h*.12), (x2 - w*.12, y2 - h*.12), (x1 + w*.12, y2 - h*.12)], fill=fill, outline=dark)
 
 
-def _draw_enemy_marker(draw, cx, cy, enemy_count, font):
+def _draw_stack_count(draw, x, y, count, radius, font):
+    if count <= 0:
+        return
+    text = str(count)
+    r = max(5, int(radius))
+    draw.ellipse((x - r, y - r, x + r, y + r), fill=(20, 20, 20, 245), outline=(245, 245, 210, 255), width=1)
+    _centered_text(draw, (x - r, y - r, x + r, y + r), text, font, fill=(255, 255, 215, 255), outline=(0, 0, 0, 240))
+
+
+def _draw_enemy_presence(draw, x, y, enemy_count, size, font):
     if enemy_count <= 0:
         return
+    r = max(5, int(size))
+    pts = [(x, y - r), (x - r, y + r), (x + r, y + r)]
+    draw.polygon(pts, fill=(*ENEMY_MARKER_FILL, 255), outline=(255, 200, 200, 255))
+    if enemy_count > 1:
+        _centered_text(draw, (x - r, y - r * 0.45, x + r, y + r * 1.1), str(enemy_count), font, fill=(255, 255, 255, 255), outline=(80, 0, 0, 240))
 
-    r = 7
-    x = cx + HEX_SIZE * 0.24
-    y = cy + HEX_SIZE * 0.50
-    points = [
-        (x, y - r),
-        (x - r, y + r),
-        (x + r, y + r),
-    ]
-    outline = [
-        (x, y - r - 2),
-        (x - r - 2, y + r + 2),
-        (x + r + 2, y + r + 2),
-    ]
-    draw.polygon(outline, fill=(55, 0, 0, 230))
-    draw.polygon(points, fill=(205, 35, 35, 255), outline=(255, 190, 190, 255))
-    _centered_text(
-        draw,
-        (x - r, y - 3, x + r, y + r + 2),
-        str(enemy_count),
-        font,
-        fill=(255, 255, 255, 255),
-        outline=(80, 0, 0, 240),
-    )
+
+def _draw_unit_stack_marker(draw, cx, cy, brigades_map, player_count, enemy_count, font, size=None):
+    if size is None:
+        size = HEX_SIZE
+    badges = _brigade_badges(brigades_map, player_count)
+    has_players = player_count > 0
+    marker_w = max(28, int(size * 1.35))
+    marker_h = max(18, int(size * 0.66))
+    marker_x = cx - marker_w / 2
+    marker_y = cy + size * 0.17
+
+    if has_players:
+        draw.rounded_rectangle(
+            (marker_x, marker_y, marker_x + marker_w, marker_y + marker_h),
+            radius=max(3, int(size * 0.10)),
+            fill=(*PLAYER_MARKER_FILL, 245),
+            outline=(*PLAYER_MARKER_EDGE, 255),
+            width=2,
+        )
+        inner_pad = max(3, int(size * 0.10))
+        icon_area = (marker_x + inner_pad, marker_y + inner_pad, marker_x + marker_w - inner_pad, marker_y + marker_h - inner_pad)
+        visible = badges[:5]
+        overflow = len(badges) > 5
+        if overflow:
+            visible = badges[:4]
+
+        if marker_w < 28 or marker_h < 18:
+            # Tight fallback: simple mixed stack dot plus count.
+            draw.ellipse((cx - 4, marker_y + 5, cx + 4, marker_y + 13), fill=(235, 235, 235, 255))
+            if len(badges) > 1:
+                draw.line((cx - 5, marker_y + 14, cx + 5, marker_y + 4), fill=(20, 20, 20, 255), width=1)
+        else:
+            n = max(1, len(visible) + (1 if overflow else 0))
+            gap = max(1, int(size * 0.04))
+            cell_w = ((icon_area[2] - icon_area[0]) - gap * (n - 1)) / n
+            cell_h = icon_area[3] - icon_area[1]
+            for idx, (brigade_key, _cnt) in enumerate(visible):
+                ix1 = icon_area[0] + idx * (cell_w + gap)
+                ix2 = ix1 + cell_w
+                color = BRIGADE_COLORS.get(brigade_key, (220, 220, 220))
+                _draw_brigade_icon(draw, brigade_key, (ix1, icon_area[1], ix2, icon_area[1] + cell_h), (*color, 255))
+            if overflow:
+                plus_idx = len(visible)
+                px1 = icon_area[0] + plus_idx * (cell_w + gap)
+                px2 = px1 + cell_w
+                _centered_text(draw, (px1, icon_area[1], px2, icon_area[3]), "+", font, fill=(255, 255, 255, 255), outline=(0, 0, 0, 240))
+
+        count_r = max(5, size * 0.16)
+        _draw_stack_count(draw, marker_x + marker_w - count_r, marker_y + marker_h - count_r, player_count, count_r, font)
+        if enemy_count > 0:
+            _draw_enemy_presence(draw, marker_x + marker_w - max(7, size * 0.18), marker_y + max(6, size * 0.16), enemy_count, max(5, size * 0.15), font)
+    elif enemy_count > 0:
+        # Enemy-only hex: keep the red indicator inside the lower-right interior.
+        _draw_enemy_presence(draw, cx + size * 0.22, cy + size * 0.44, enemy_count, max(6, size * 0.20), font)
 
 _SANS    = ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"]
@@ -355,13 +360,7 @@ def render_planet_map(
         e_ct         = units.get("enemy", 0)
 
         if p_ct > 0 or e_ct > 0:
-            player_x = cx - 16 if e_ct > 0 else cx
-
-            if p_ct > 0:
-                _draw_player_markers(draw, player_x, cy, brigades_map, p_ct, f_pip)
-
-            if e_ct > 0:
-                _draw_enemy_marker(draw, cx, cy, e_ct, f_pip)
+            _draw_unit_stack_marker(draw, cx, cy, brigades_map, p_ct, e_ct, f_pip)
 
 
     # ── Title ─────────────────────────────────────────────────────────────────
@@ -405,20 +404,24 @@ def render_planet_map(
         try: draw.text((x+18,ly+46), lbl, font=f_legend, fill=(162,162,162,255))
         except Exception: pass
 
-    r2 = 6
-    draw.rectangle((lx, ly+72-r2, lx+r2*2+6, ly+72+r2),
-                   fill=(18,28,68,255), outline=(200,210,255,255), width=1)
-    _centered_text(draw, (lx, ly+72-r2, lx+r2*2+6, ly+72+r2), "IN",
-                   f_pip, fill=(255,255,255,255))
+    _draw_unit_stack_marker(
+        draw,
+        lx + 18,
+        ly + 58,
+        {"infantry": 1, "armoured": 1, "artillery": 1},
+        3,
+        0,
+        f_pip,
+        size=24,
+    )
     tri_x = lx + 380
     tri_y = ly + 72
-    draw.polygon([(tri_x, tri_y-r2-2), (tri_x-r2-2, tri_y+r2+2), (tri_x+r2+2, tri_y+r2+2)],
-                 fill=(190,40,40,230), outline=(255,190,190,255))
+    _draw_enemy_presence(draw, tri_x, tri_y, 2, 6, f_pip)
     try:
-        draw.text((lx+r2*2+12,    ly+65),
+        draw.text((lx+44,    ly+65),
                   f"= {theme.get('player_unit','PMC')} units",
                   font=f_legend, fill=(162,162,162,255))
-        draw.text((tri_x+r2+12, ly+65),
+        draw.text((tri_x+14, ly+65),
                   f"= {theme.get('enemy_unit','Enemy')} units",
                   font=f_legend, fill=(162,162,162,255))
     except Exception:
@@ -828,13 +831,7 @@ def render_movement_map(
         p_ct         = sum(brigades_map.values()) if brigades_map else units.get("players", 0)
         e_ct         = units.get("enemy", 0)
         if p_ct > 0 or e_ct > 0:
-            player_x = cx - 16 if e_ct > 0 else cx
-
-            if p_ct > 0:
-                _draw_player_markers(draw, player_x, cy, brigades_map, p_ct, f_pip)
-
-            if e_ct > 0:
-                _draw_enemy_marker(draw, cx, cy, e_ct, f_pip)
+            _draw_unit_stack_marker(draw, cx, cy, brigades_map, p_ct, e_ct, f_pip)
 
 
     # ── Draw movement arrow ────────────────────────────────────────────────────
