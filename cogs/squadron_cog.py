@@ -596,37 +596,34 @@ class MoveDirectionView(discord.ui.View):
     """
     Hex directional pad for a flat-top hex grid.
 
-    Flat-top hexes have 6 directions — there is no true N or S, only:
-        NW (5)  NE (4? — index per DIRECTIONS array)
-        W  (3)       E  (0)
-        SW (2)  SE (1)
+    On a flat-top hex grid the six directions map visually to:
+        NW  N  NE
+        SW  S  SE
 
     Discord allows max 5 rows of up to 5 components each.
 
-    Layout chosen:
-      Row 0: [NW] [·] [NE]          ← top diagonal pair, centre spacer
-      Row 1: [W ] [·] [E ]          ← horizontal pair, centre spacer
-      Row 2: [SW] [·] [SE]          ← bottom diagonal pair, centre spacer
-      Row 3: Step selector (Select) — only added when move_steps > 1
-      Row 4: [🚀 Fast Travel]  [✓ Done]
-
-    The "·" spacers are disabled placeholder buttons that keep the columns
-    visually aligned so the compass reads naturally.
+    Layout:
+      Row 0: [NW] [N ] [NE]
+      Row 1: [SW] [S ] [SE]
+      Row 2: Step selector (Select) — only added when move_steps > 1
+      Row 3: [🚀 Fast Travel]  [✓ Done]
 
     When a unit has move_steps > 1 the player can pick how many hexes to
-    traverse in a single press (1 … move_steps) via the Select on row 3.
+    traverse in a single press (1 … move_steps) via the Select on row 2.
     The selection persists across button presses until they change it.
     """
 
     # DIRECTIONS index mapping (from hexmap.py):
-    # 0=E, 1=SE, 2=SW, 3=W, 4=NW, 5=NE
+    # 0=E(1,0), 1=SE(0,1), 2=SW(-1,1), 3=W(-1,0), 4=NW(0,-1), 5=NE(1,-1)
+    # Visual mapping on the rendered flat-top map:
+    #   NW=(0,-1), N=(1,-1), NE=(1,0), SW=(-1,0), S=(-1,1), SE=(0,1)
     _DIR = {
-        "NW": 4,
-        "NE": 5,
-        "W":  3,
-        "E":  0,
-        "SW": 2,
-        "SE": 1,
+        "NW": 4,   # (0,-1)  upper-left
+        "N":  5,   # (1,-1)  straight up
+        "NE": 0,   # (1, 0)  upper-right
+        "SW": 3,   # (-1,0)  lower-left
+        "S":  2,   # (-1,1)  straight down
+        "SE": 1,   # (0, 1)  lower-right
     }
 
     def __init__(self, guild_id: int, max_steps: int = 1, chosen_steps: int = 1):
@@ -638,7 +635,7 @@ class MoveDirectionView(discord.ui.View):
         # ── Step selector (row 3) — only when unit can move more than 1 hex ──
         if max_steps > 1:
             select = StepSelect(max_steps=max_steps, current=chosen_steps)
-            select.row = 3
+            select.row = 2
             self.add_item(select)
 
     # ── Internal move logic ────────────────────────────────────────────────────
@@ -709,42 +706,32 @@ class MoveDirectionView(discord.ui.View):
             await interaction.response.edit_message(embed=embed, view=new_view)
 
     # ── Direction buttons ──────────────────────────────────────────────────────
-    # Row 0 — NW · NE
+    # Row 0 — NW  N  NE
     @discord.ui.button(label="NW", style=discord.ButtonStyle.secondary, row=0)
     async def nw(self, i, b): await self._do_move(i, "NW")
 
-    @discord.ui.button(label="·", style=discord.ButtonStyle.secondary, row=0, disabled=True)
-    async def _sp0(self, i, b): pass
+    @discord.ui.button(label="N",  style=discord.ButtonStyle.primary,   row=0)
+    async def n(self, i, b):  await self._do_move(i, "N")
 
     @discord.ui.button(label="NE", style=discord.ButtonStyle.secondary, row=0)
     async def ne(self, i, b): await self._do_move(i, "NE")
 
-    # Row 1 — W · E
-    @discord.ui.button(label="W", style=discord.ButtonStyle.primary, row=1)
-    async def west(self, i, b): await self._do_move(i, "W")
-
-    @discord.ui.button(label="·", style=discord.ButtonStyle.secondary, row=1, disabled=True)
-    async def _sp1(self, i, b): pass
-
-    @discord.ui.button(label="E", style=discord.ButtonStyle.primary, row=1)
-    async def east(self, i, b): await self._do_move(i, "E")
-
-    # Row 2 — SW · SE
-    @discord.ui.button(label="SW", style=discord.ButtonStyle.secondary, row=2)
+    # Row 1 — SW  S  SE
+    @discord.ui.button(label="SW", style=discord.ButtonStyle.secondary, row=1)
     async def sw(self, i, b): await self._do_move(i, "SW")
 
-    @discord.ui.button(label="·", style=discord.ButtonStyle.secondary, row=2, disabled=True)
-    async def _sp2(self, i, b): pass
+    @discord.ui.button(label="S",  style=discord.ButtonStyle.primary,   row=1)
+    async def s(self, i, b):  await self._do_move(i, "S")
 
-    @discord.ui.button(label="SE", style=discord.ButtonStyle.secondary, row=2)
+    @discord.ui.button(label="SE", style=discord.ButtonStyle.secondary, row=1)
     async def se(self, i, b): await self._do_move(i, "SE")
 
-    # Row 4 — action buttons (row 3 is reserved for StepSelect when present)
-    @discord.ui.button(label="🚀 Fast Travel", style=discord.ButtonStyle.danger, row=4)
+    # Row 3 — action buttons (row 2 is reserved for StepSelect when present)
+    @discord.ui.button(label="🚀 Fast Travel", style=discord.ButtonStyle.danger, row=3)
     async def fast_travel(self, i, b):
         await i.response.send_modal(FastTravelModal(self.guild_id))
 
-    @discord.ui.button(label="✓ Done", style=discord.ButtonStyle.success, row=4)
+    @discord.ui.button(label="✓ Done", style=discord.ButtonStyle.success, row=3)
     async def done(self, i, b):
         await i.response.edit_message(
             embed=discord.Embed(description="Movement complete.", color=0x446644),
