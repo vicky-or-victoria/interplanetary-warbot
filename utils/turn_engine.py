@@ -123,7 +123,8 @@ class TurnEngine:
 
             # Reset per-turn flags
             await conn.execute(
-                "UPDATE squadrons SET is_dug_in=FALSE, artillery_armed=FALSE "
+                "UPDATE squadrons SET is_dug_in=FALSE, artillery_armed=FALSE, "
+                "hexes_moved_this_turn=0 "
                 "WHERE guild_id=$1 AND planet_id=$2",
                 guild_id, planet_id)
             await conn.execute(
