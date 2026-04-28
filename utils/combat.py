@@ -76,9 +76,10 @@ def _roll_defender(unit: CombatUnit) -> int:
 
     bonus      = unit.defense // 4
     morale     = unit.morale  // 5
+    recon      = unit.recon   // 6
     supply_pen = max(0, (5 - unit.supply) * 2)
     dig_in_bon = 4 if (unit.brigade == "infantry" and unit.is_dug_in) else 0
-    return max(1, base + bonus + morale + dig_in_bon - supply_pen)
+    return max(1, base + bonus + morale + recon + dig_in_bon - supply_pen)
 
 
 def resolve_combat(
@@ -95,7 +96,8 @@ def resolve_combat(
       - Attacker damage (damage dealt TO attacker) = max(1, defender_roll - attacker_roll // 2)
     The higher roll always hurts more, but the lower roll still always connects.
 
-    Routing threshold: checked externally — route only when losing roll >= 10.
+    Routing threshold: checked externally. A side routes only when it loses
+    an exchange by 10 or more.
     """
 
     if attacker.brigade == "artillery" and not attacker.artillery_armed:
@@ -114,6 +116,11 @@ def resolve_combat(
 
     a_roll = _roll_attacker(attacker)
     d_roll = _roll_defender(defender)
+
+    # The turn engine models player units as the attacker in each exchange.
+    # Dug-in infantry still needs to blunt incoming counterfire.
+    if attacker.brigade == "infantry" and attacker.is_dug_in:
+        d_roll = max(1, d_roll - 4)
 
     # Armoured damage reduction
     if defender.brigade == "armoured":
