@@ -527,6 +527,7 @@ def render_movement_map(
     zoom_radius: int = 5,
     remaining:  int = None,   # hexes left in turn budget — drives range ring
     budget:     int = None,   # total hex budget this turn
+    show_arrow: bool = True,  # False = range-only view, no arrow or movement label
 ) -> io.BytesIO:
     """
     Renders a cropped map centered on the movement path, with a colored arrow
@@ -534,6 +535,8 @@ def render_movement_map(
     zoom_radius controls how many hex-rings around the movement are visible.
     When remaining/budget are supplied, a range ring overlay is drawn showing
     reachable hexes (teal) and already-used range (faint red wash).
+    When show_arrow=False the arrow and movement label are suppressed (initial
+    range-only view shown when the player first opens the move pad).
     """
     if theme is None:
         theme = _default_theme()
@@ -678,67 +681,71 @@ def render_movement_map(
     # ── Draw movement arrow ────────────────────────────────────────────────────
     draw = ImageDraw.Draw(img)
 
-    # Highlight from hex (green outline) and to hex (yellow outline)
-    try:
-        from_corners = hex_corners(from_cx, from_cy, HEX_SIZE - 0.8)
-        draw.polygon(from_corners, outline=(80, 220, 80, 255), width=3)
-    except Exception:
-        pass
-    try:
-        to_corners = hex_corners(to_cx, to_cy, HEX_SIZE - 0.8)
-        draw.polygon(to_corners, outline=(255, 220, 40, 255), width=3)
-    except Exception:
-        pass
+    if show_arrow:
+        # Highlight from hex (green outline) and to hex (yellow outline)
+        try:
+            from_corners = hex_corners(from_cx, from_cy, HEX_SIZE - 0.8)
+            draw.polygon(from_corners, outline=(80, 220, 80, 255), width=3)
+        except Exception:
+            pass
+        try:
+            to_corners = hex_corners(to_cx, to_cy, HEX_SIZE - 0.8)
+            draw.polygon(to_corners, outline=(255, 220, 40, 255), width=3)
+        except Exception:
+            pass
 
-    # Draw arrow line
-    dx = to_cx - from_cx
-    dy = to_cy - from_cy
-    dist = math.sqrt(dx*dx + dy*dy) or 1
-    ux, uy = dx/dist, dy/dist
+        # Draw arrow line
+        dx = to_cx - from_cx
+        dy = to_cy - from_cy
+        dist = math.sqrt(dx*dx + dy*dy) or 1
+        ux, uy = dx/dist, dy/dist
 
-    # Arrow shaft — thick cyan line
-    shaft_end_x = to_cx - ux * HEX_SIZE * 0.55
-    shaft_end_y = to_cy - uy * HEX_SIZE * 0.55
-    shaft_start_x = from_cx + ux * HEX_SIZE * 0.6
-    shaft_start_y = from_cy + uy * HEX_SIZE * 0.6
+        # Arrow shaft — thick cyan line
+        shaft_end_x = to_cx - ux * HEX_SIZE * 0.55
+        shaft_end_y = to_cy - uy * HEX_SIZE * 0.55
+        shaft_start_x = from_cx + ux * HEX_SIZE * 0.6
+        shaft_start_y = from_cy + uy * HEX_SIZE * 0.6
 
-    # Draw outline then fill for visibility
-    for w in [7, 5, 3]:
-        col = (0,0,0,200) if w == 7 else (80,240,200,220) if w == 5 else (160,255,230,255)
-        draw.line(
-            (shaft_start_x, shaft_start_y, shaft_end_x, shaft_end_y),
-            fill=col, width=w)
+        for w in [7, 5, 3]:
+            col = (0,0,0,200) if w == 7 else (80,240,200,220) if w == 5 else (160,255,230,255)
+            draw.line(
+                (shaft_start_x, shaft_start_y, shaft_end_x, shaft_end_y),
+                fill=col, width=w)
 
-    # Arrowhead
-    perp_x, perp_y = -uy, ux
-    head_size = HEX_SIZE * 0.45
-    tip_x = to_cx - ux * HEX_SIZE * 0.3
-    tip_y = to_cy - uy * HEX_SIZE * 0.3
-    left_x  = shaft_end_x + perp_x * head_size * 0.5
-    left_y  = shaft_end_y + perp_y * head_size * 0.5
-    right_x = shaft_end_x - perp_x * head_size * 0.5
-    right_y = shaft_end_y - perp_y * head_size * 0.5
-    draw.polygon(
-        [(tip_x, tip_y), (left_x, left_y), (right_x, right_y)],
-        fill=(80,240,200,240), outline=(0,0,0,200))
+        # Arrowhead
+        perp_x, perp_y = -uy, ux
+        head_size = HEX_SIZE * 0.45
+        tip_x = to_cx - ux * HEX_SIZE * 0.3
+        tip_y = to_cy - uy * HEX_SIZE * 0.3
+        left_x  = shaft_end_x + perp_x * head_size * 0.5
+        left_y  = shaft_end_y + perp_y * head_size * 0.5
+        right_x = shaft_end_x - perp_x * head_size * 0.5
+        right_y = shaft_end_y - perp_y * head_size * 0.5
+        draw.polygon(
+            [(tip_x, tip_y), (left_x, left_y), (right_x, right_y)],
+            fill=(80,240,200,240), outline=(0,0,0,200))
 
-    # Label on arrow
-    f_arrow = _font(_SANS, 9)
-    mid_x = (from_cx + to_cx) / 2
-    mid_y = (from_cy + to_cy) / 2 - 12
-    arrow_label = f"{unit_name}: {from_addr} → {to_addr}"
-    try:
-        bb   = draw.textbbox((0,0), arrow_label, font=f_arrow)
-        lw2  = (bb[2]-bb[0])/2
-        for dx2, dy2 in [(-1,-1),(1,-1),(-1,1),(1,1),(0,-1),(0,1),(-1,0),(1,0)]:
-            draw.text((mid_x-lw2+dx2, mid_y+dy2), arrow_label, font=f_arrow, fill=(0,0,0,230))
-        draw.text((mid_x-lw2, mid_y), arrow_label, font=f_arrow, fill=(80,240,200,255))
-    except Exception:
-        pass
+        # Label on arrow
+        f_arrow = _font(_SANS, 9)
+        mid_x = (from_cx + to_cx) / 2
+        mid_y = (from_cy + to_cy) / 2 - 12
+        arrow_label = f"{unit_name}: {from_addr} → {to_addr}"
+        try:
+            bb   = draw.textbbox((0,0), arrow_label, font=f_arrow)
+            lw2  = (bb[2]-bb[0])/2
+            for dx2, dy2 in [(-1,-1),(1,-1),(-1,1),(1,1),(0,-1),(0,1),(-1,0),(1,0)]:
+                draw.text((mid_x-lw2+dx2, mid_y+dy2), arrow_label, font=f_arrow, fill=(0,0,0,230))
+            draw.text((mid_x-lw2, mid_y), arrow_label, font=f_arrow, fill=(80,240,200,255))
+        except Exception:
+            pass
 
     # ── Title bar ─────────────────────────────────────────────────────────────
     draw.rectangle((0, 0, img_w, TITLE_H), fill=(10,10,10,255))
-    title_text = f"Movement — {unit_name}  |  {from_addr} → {to_addr}"
+    title_text = (
+        f"Movement — {unit_name}  |  {from_addr} → {to_addr}"
+        if show_arrow else
+        f"Range — {unit_name}  |  Position: {from_addr}"
+    )
     try:
         bb  = draw.textbbox((0,0), title_text, font=f_title)
         tw, th = bb[2]-bb[0], bb[3]-bb[1]
@@ -836,6 +843,7 @@ async def render_movement_map_for_guild(
     planet_id: int = None,
     remaining: int = None,
     budget:    int = None,
+    show_arrow: bool = True,
 ) -> io.BytesIO:
     from utils.db import get_theme, get_active_planet_id
 
@@ -888,6 +896,7 @@ async def render_movement_map_for_guild(
         theme      = theme,
         remaining  = remaining,
         budget     = budget,
+        show_arrow = show_arrow,
     )
 
 
