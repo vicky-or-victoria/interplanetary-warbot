@@ -33,7 +33,7 @@ BRIGADES = {
     "armoured": {
         "name":        "Armoured Brigade",
         "emoji":       "🛡",
-        "ascii_icon":  "[]",   # tank/armour block
+        "ascii_icon":  "⬢",   # tank/armour block
         "description": (
             "Heavy mechanised unit. Devastating in assault and nearly "
             "impenetrable — but slow to deploy and resupply."
@@ -56,7 +56,7 @@ BRIGADES = {
     "infantry": {
         "name":        "Infantry Brigade",
         "emoji":       "⚔",
-        "ascii_icon":  "##",   # boots on the ground
+        "ascii_icon":  "XX",   # boots on the ground
         "description": (
             "Versatile ground forces. High morale and solid defense. "
             "Can dig in to hold a position under heavy fire."
@@ -101,7 +101,7 @@ BRIGADES = {
     "artillery": {
         "name":        "Artillery Brigade",
         "emoji":       "💥",
-        "ascii_icon":  "!*",   # bang / shell burst
+        "ascii_icon":  "✹",   # bang / shell burst
         "description": (
             "Long-range fire support. Devastating when armed and stationary. "
             "Useless on the move."
@@ -125,7 +125,7 @@ BRIGADES = {
     "engineering": {
         "name":        "Engineering Brigade",
         "emoji":       "🔧",
-        "ascii_icon":  "+E",   # plus/wrench / engineer cross
+        "ascii_icon":  "⊞",   # plus/wrench / engineer cross
         "description": (
             "Field engineers and logistics specialists. They build, repair, "
             "and sustain — turning the tide through infrastructure."
@@ -148,7 +148,7 @@ BRIGADES = {
     "special_ops": {
         "name":        "Special Operations",
         "emoji":       "🕵",
-        "ascii_icon":  "??",   # unknown / ghost
+        "ascii_icon":  "◇",   # unknown / ghost
         "description": (
             "Elite covert insertion unit. Unpredictable and deadly. "
             "Goes where other brigades cannot."
@@ -210,7 +210,7 @@ def can_direct_insert(brigade: str) -> bool:
 
 def brigade_ascii_icon(key: str) -> str:
     """Return the 2-character ASCII icon for a brigade (ASCII-safe, monospace-friendly)."""
-    return BRIGADES.get(key, BRIGADES["infantry"]).get("ascii_icon", "##")
+    return BRIGADES.get(key, BRIGADES["infantry"]).get("ascii_icon", "XX")
 
 
 # ── Discord-friendly brigade choices list ─────────────────────────────────────
