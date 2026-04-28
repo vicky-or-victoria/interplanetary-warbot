@@ -11,7 +11,7 @@ import random
 from PIL import Image, ImageDraw, ImageFont
 
 from utils.hexmap import GRID_COORDS, hex_key, hex_center, hex_corners, GRID_SET, hexes_within, hex_distance
-from utils.brigades import brigade_ascii_icon, BRIGADES
+from utils.brigades import BRIGADES
 
 # ── Brigade colors (temporary visual markers) ────────────────────────────────
 BRIGADE_COLORS = {
@@ -23,6 +23,18 @@ BRIGADE_COLORS = {
     "engineering":  (255, 200, 120),
     "special_ops":  (200, 140, 255),
 }
+
+BRIGADE_MARKER_LABELS = {
+    "infantry":     "IN",
+    "armoured":     "AR",
+    "artillery":    "AT",
+    "aerial":       "AI",
+    "ranger":       "RG",
+    "engineering":  "EN",
+    "special_ops":  "SO",
+}
+
+BRIGADE_ORDER = {key: idx for idx, key in enumerate(BRIGADES.keys())}
 
 # ── Fog of War ─────────────────────────────────────────────────────────────────
 # Enemy units are only visible to players if they are within this many hexes
@@ -38,6 +50,145 @@ def _font(paths, size):
         except Exception:
             pass
     return ImageFont.load_default()
+
+
+def _outlined_text(draw, xy, text, font, fill, outline=(0, 0, 0, 230)):
+    x, y = xy
+    for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+        draw.text((x + dx, y + dy), text, font=font, fill=outline)
+    draw.text((x, y), text, font=font, fill=fill)
+
+
+def _centered_text(draw, box, text, font, fill, outline=(0, 0, 0, 230)):
+    try:
+        bb = draw.textbbox((0, 0), text, font=font)
+        tw = bb[2] - bb[0]
+        th = bb[3] - bb[1]
+        x1, y1, x2, y2 = box
+        x = x1 + ((x2 - x1) - tw) / 2
+        y = y1 + ((y2 - y1) - th) / 2 - 1
+        _outlined_text(draw, (x, y), text, font, fill, outline)
+    except Exception:
+        pass
+
+
+def _brigade_badges(brigades_map, player_count):
+    if brigades_map:
+        return [
+            (bk, cnt)
+            for bk, cnt in sorted(
+                brigades_map.items(),
+                key=lambda item: (BRIGADE_ORDER.get(item[0], 999), item[0]),
+            )
+            if cnt > 0
+        ]
+    return [("infantry", player_count)] if player_count > 0 else []
+
+
+def _has_unit_markers(unit_data, key):
+    units = unit_data.get(key, {})
+    brigades_map = units.get("brigades", {})
+    player_count = sum(brigades_map.values()) if brigades_map else units.get("players", 0)
+    enemy_count = units.get("enemy", 0)
+    return player_count > 0 or enemy_count > 0
+
+
+def _draw_player_markers(draw, cx, cy, brigades_map, player_count, font):
+    badges = _brigade_badges(brigades_map, player_count)
+    if not badges:
+        return (0, 0)
+
+    badge_w = 18
+    badge_h = 16
+    gap = 2
+    max_per_row = 3
+    rows = [badges[i:i + max_per_row] for i in range(0, len(badges), max_per_row)]
+    total_h = len(rows) * badge_h + (len(rows) - 1) * gap
+    y_start = int(cy + HEX_SIZE * 0.56 - total_h / 2)
+    max_w = 0
+
+    for row_idx, row in enumerate(rows):
+        row_w = len(row) * badge_w + (len(row) - 1) * gap
+        max_w = max(max_w, row_w)
+        x_start = int(cx - row_w / 2)
+        y = y_start + row_idx * (badge_h + gap)
+
+        for col_idx, (brigade_key, cnt) in enumerate(row):
+            x = x_start + col_idx * (badge_w + gap)
+            color = BRIGADE_COLORS.get(brigade_key, (200, 200, 200))
+            label = BRIGADE_MARKER_LABELS.get(brigade_key, "??")
+
+            draw.rectangle(
+                (x, y, x + badge_w, y + badge_h),
+                fill=(18, 28, 68, 255),
+                outline=(170, 205, 255, 255),
+                width=1,
+            )
+            draw.rectangle(
+                (x + 2, y + 2, x + badge_w - 2, y + badge_h - 2),
+                fill=(*color, 255),
+            )
+            _centered_text(
+                draw,
+                (x + 1, y + 1, x + badge_w - 1, y + badge_h - 1),
+                label,
+                font,
+                fill=(255, 255, 255, 255),
+                outline=(0, 0, 0, 240),
+            )
+
+            if cnt > 1:
+                cnt_str = str(cnt)
+                try:
+                    cb = draw.textbbox((0, 0), cnt_str, font=font)
+                    cw = cb[2] - cb[0]
+                    ch = cb[3] - cb[1]
+                    pill_x = x + badge_w - cw - 4
+                    pill_y = y - 1
+                    draw.rectangle(
+                        (pill_x - 1, pill_y, x + badge_w + 1, pill_y + ch + 2),
+                        fill=(20, 20, 20, 235),
+                        outline=(255, 255, 190, 255),
+                        width=1,
+                    )
+                    draw.text(
+                        (pill_x, pill_y),
+                        cnt_str,
+                        font=font,
+                        fill=(255, 255, 190, 255),
+                    )
+                except Exception:
+                    pass
+
+    return (max_w, total_h)
+
+
+def _draw_enemy_marker(draw, cx, cy, enemy_count, font):
+    if enemy_count <= 0:
+        return
+
+    r = 10
+    y = cy + HEX_SIZE * 0.56
+    points = [
+        (cx, y - r),
+        (cx - r, y + r),
+        (cx + r, y + r),
+    ]
+    outline = [
+        (cx, y - r - 2),
+        (cx - r - 2, y + r + 2),
+        (cx + r + 2, y + r + 2),
+    ]
+    draw.polygon(outline, fill=(55, 0, 0, 230))
+    draw.polygon(points, fill=(205, 35, 35, 255), outline=(255, 190, 190, 255))
+    _centered_text(
+        draw,
+        (cx - r, y - 3, cx + r, y + r + 2),
+        str(enemy_count),
+        font,
+        fill=(255, 255, 255, 255),
+        outline=(80, 0, 0, 240),
+    )
 
 _SANS    = ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
             "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"]
@@ -161,7 +312,8 @@ def render_planet_map(
             lw  = (bb[2]-bb[0])/2
             lh  = (bb[3]-bb[1])/2
             lx2 = cx - lw
-            ly2 = cy - lh
+            label_cy = cy - HEX_SIZE * 0.28 if _has_unit_markers(unit_data, key) else cy
+            ly2 = label_cy - lh
             # White shadow for contrast on dark tiles
             for ox2, oy2 in [(-1,-1),(1,-1),(-1,1),(1,1),(0,-1),(0,1),(-1,0),(1,0)]:
                 draw.text((lx2+ox2, ly2+oy2), lbl, font=f_coord, fill=(255,255,255,200))
@@ -182,75 +334,15 @@ def render_planet_map(
         e_ct         = units.get("enemy", 0)
 
         if p_ct > 0 or e_ct > 0:
-            dot_y = cy + HEX_SIZE * 0.55
-            dot_r = 8
+            player_x = cx - 16 if e_ct > 0 else cx
+            enemy_x = cx + 30 if p_ct > 0 else cx
 
-            # ── Player units: one small badge per brigade type ────────────────
             if p_ct > 0:
-                badge_w = 18   # width of each brigade badge
-                badge_h = 18
-                gap     = 3
-                # Collect (icon, count) pairs in stable order
-                badges = [(brigade_ascii_icon(bk), cnt)
-                          for bk, cnt in sorted(brigades_map.items())
-                          if cnt > 0]
-                if not badges:
-                    # legacy fallback: plain blue square with count
-                    badges = [("XX", p_ct)]
+                _draw_player_markers(draw, player_x, cy, brigades_map, p_ct, f_pip)
 
-                total_badge_w = len(badges) * badge_w + (len(badges) - 1) * gap
-                # Centre the row of badges under the hex
-                bx_start = int(cx - total_badge_w / 2)
-
-                for bi, (icon, cnt) in enumerate(badges):
-                    bx = bx_start + bi * (badge_w + gap)
-                    by = int(dot_y - badge_h / 2)
-                    # Slightly different blue shade so stacked brigades are legible
-                    shade = max(40, 70 - bi * 8)
-                    draw.rectangle(
-                        (bx, by, bx + badge_w, by + badge_h),
-                        fill=(shade, shade + 20, 200, 255),
-                        outline=(180, 200, 255, 255), width=1)
-                    try:
-                        # Get brigade color
-                        color = BRIGADE_COLORS.get(bk, (200, 200, 200))
-
-                        # Draw inner square (acts as icon)
-                        pad = 3
-                        draw.rectangle(
-                        (bx + pad, by + pad, bx + badge_w - pad, by + badge_h - pad),
-                        fill=color
-                        )
-                        # Count superscript at top-right of badge
-                        if cnt > 1:
-                            cnt_str = str(cnt)
-                            cb = draw.textbbox((0, 0), cnt_str, font=f_pip)
-                            cw = cb[2] - cb[0]
-                            # tiny white count in top-right corner
-                            draw.text((bx + badge_w - cw - 1, by),
-                                      cnt_str, font=f_pip, fill=(255, 255, 180, 255))
-                    except Exception:
-                        pass
-
-            # ── Enemy units: plain red square with count (unchanged) ──────────
             if e_ct > 0:
-                if p_ct > 0:
-                    # shift enemy badge to the right so it doesn't overlap
-                    ex_l = int(cx + p_ct * (13 + 2) / 2 + 2)
-                    ex_r = ex_l + dot_r * 2
-                else:
-                    ex_l = int(cx - dot_r)
-                    ex_r = int(cx + dot_r)
-                draw.rectangle(
-                    (ex_l, dot_y - dot_r, ex_r, dot_y + dot_r),
-                    fill=(190, 40, 40, 255), outline=(255, 190, 190, 255), width=1)
-                try:
-                    bb = draw.textbbox((0, 0), str(e_ct), font=f_pip)
-                    ew, eh = (bb[2] - bb[0]) / 2, (bb[3] - bb[1]) / 2
-                    draw.text(((ex_l + ex_r) / 2 - ew, dot_y - eh),
-                              str(e_ct), font=f_pip, fill=(255, 255, 255, 255))
-                except Exception:
-                    pass
+                _draw_enemy_marker(draw, enemy_x, cy, e_ct, f_pip)
+
 
     # ── Title ─────────────────────────────────────────────────────────────────
     draw.rectangle((0,0,img_w,TITLE_H), fill=(10,10,10,255))
@@ -294,15 +386,19 @@ def render_planet_map(
         except Exception: pass
 
     r2 = 6
-    draw.rectangle((lx,    ly+72-r2, lx+r2*2,    ly+72+r2),
-                   fill=(55,80,200,230), outline=(200,210,255,255), width=1)
-    draw.rectangle((lx+36, ly+72-r2, lx+36+r2*2, ly+72+r2),
-                   fill=(190,40,40,230), outline=(255,190,190,255), width=1)
+    draw.rectangle((lx, ly+72-r2, lx+r2*2+6, ly+72+r2),
+                   fill=(18,28,68,255), outline=(200,210,255,255), width=1)
+    _centered_text(draw, (lx, ly+72-r2, lx+r2*2+6, ly+72+r2), "IN",
+                   f_pip, fill=(255,255,255,255))
+    tri_x = lx + 380
+    tri_y = ly + 72
+    draw.polygon([(tri_x, tri_y-r2-2), (tri_x-r2-2, tri_y+r2+2), (tri_x+r2+2, tri_y+r2+2)],
+                 fill=(190,40,40,230), outline=(255,190,190,255))
     try:
-        draw.text((lx+r2*2+6,    ly+65),
+        draw.text((lx+r2*2+12,    ly+65),
                   f"= {theme.get('player_unit','PMC')} units",
                   font=f_legend, fill=(162,162,162,255))
-        draw.text((lx+36+r2*2+6, ly+65),
+        draw.text((tri_x+r2+12, ly+65),
                   f"= {theme.get('enemy_unit','Enemy')} units",
                   font=f_legend, fill=(162,162,162,255))
     except Exception:
@@ -653,7 +749,8 @@ def render_movement_map(
             bb  = draw.textbbox((0,0), lbl, font=f_coord)
             lw2 = (bb[2]-bb[0])/2
             lh2 = (bb[3]-bb[1])/2
-            lx2, ly2 = cx-lw2, cy-lh2
+            label_cy = cy - HEX_SIZE * 0.28 if _has_unit_markers(unit_data, key) else cy
+            lx2, ly2 = cx-lw2, label_cy-lh2
             for dx2, dy2 in [(-1,-1),(1,-1),(-1,1),(1,1),(0,-1),(0,1),(-1,0),(1,0)]:
                 draw.text((lx2+dx2, ly2+dy2), lbl, font=f_coord, fill=(255,255,255,200))
             draw.text((lx2, ly2), lbl, font=f_coord, fill=(0,0,0,255))
@@ -707,56 +804,15 @@ def render_movement_map(
         p_ct         = sum(brigades_map.values()) if brigades_map else units.get("players", 0)
         e_ct         = units.get("enemy", 0)
         if p_ct > 0 or e_ct > 0:
-            dot_y   = cy + HEX_SIZE * 0.55
-            dot_r   = 6
-            badge_w = 18
-            badge_h = 18
-            gap     = 3
+            player_x = cx - 16 if e_ct > 0 else cx
+            enemy_x = cx + 30 if p_ct > 0 else cx
 
             if p_ct > 0:
-                badges = [(brigade_ascii_icon(bk), cnt)
-                          for bk, cnt in sorted(brigades_map.items()) if cnt > 0]
-                if not badges:
-                    badges = [("XX", p_ct)]
-                total_badge_w = len(badges) * badge_w + (len(badges) - 1) * gap
-                bx_start = int(cx - total_badge_w / 2)
-                for bi, (icon, cnt) in enumerate(badges):
-                    bx = bx_start + bi * (badge_w + gap)
-                    by = int(dot_y - badge_h / 2)
-                    shade = max(40, 70 - bi * 8)
-                    draw.rectangle(
-                        (bx, by, bx + badge_w, by + badge_h),
-                        fill=(shade, shade + 20, 200, 255),
-                        outline=(180, 200, 255, 255), width=1)
-                    try:
-                        # Get brigade color
-                        color = BRIGADE_COLORS.get(bk, (200, 200, 200))
-
-                        # Draw inner square (acts as icon)
-                        pad = 3
-                        draw.rectangle(
-                        (bx + pad, by + pad, bx + badge_w - pad, by + badge_h - pad),
-                        fill=color
-                        )
-                        if cnt > 1:
-                            cnt_str = str(cnt)
-                            cb = draw.textbbox((0, 0), cnt_str, font=f_pip)
-                            cw = cb[2] - cb[0]
-                            draw.text((bx + badge_w - cw - 1, by),
-                                      cnt_str, font=f_pip, fill=(255, 255, 180, 255))
-                    except Exception:
-                        pass
+                _draw_player_markers(draw, player_x, cy, brigades_map, p_ct, f_pip)
 
             if e_ct > 0:
-                if p_ct > 0:
-                    ex_l = int(cx + p_ct * (badge_w + gap) / 2 + 2)
-                    ex_r = ex_l + dot_r * 2
-                else:
-                    ex_l = int(cx - dot_r)
-                    ex_r = int(cx + dot_r)
-                draw.rectangle(
-                    (ex_l, dot_y - dot_r, ex_r, dot_y + dot_r),
-                    fill=(190, 40, 40, 255), outline=(255, 190, 190, 255), width=1)
+                _draw_enemy_marker(draw, enemy_x, cy, e_ct, f_pip)
+
 
     # ── Draw movement arrow ────────────────────────────────────────────────────
     draw = ImageDraw.Draw(img)
