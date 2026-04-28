@@ -93,6 +93,18 @@ def _has_unit_markers(unit_data, key):
     return player_count > 0 or enemy_count > 0
 
 
+def _hex_label_positions(cx, cy, occupied=False):
+    if occupied:
+        return {
+            "terrain_y": cy - HEX_SIZE * 0.55,
+            "coord_y": cy - HEX_SIZE * 0.22,
+        }
+    return {
+        "terrain_y": cy - HEX_SIZE * 0.52,
+        "coord_y": cy,
+    }
+
+
 def _draw_player_markers(draw, cx, cy, brigades_map, player_count, font):
     badges = _brigade_badges(brigades_map, player_count)
     if not badges:
@@ -278,6 +290,8 @@ def render_planet_map(
         g       = t_def["fill"]
         b       = t_def["border"]
         corners = hex_corners(cx, cy, HEX_SIZE - 0.8)
+        occupied = _has_unit_markers(unit_data, key)
+        label_pos = _hex_label_positions(cx, cy, occupied)
 
         draw.polygon(corners, fill=(g, g, g, 255))
 
@@ -297,7 +311,7 @@ def render_planet_map(
                 bb   = draw.textbbox((0,0), abbr, font=f_abbr)
                 aw   = (bb[2]-bb[0])/2
                 ax   = cx - aw
-                ay   = cy - HEX_SIZE*0.52
+                ay   = label_pos["terrain_y"]
                 # White shadow/outline for contrast on all terrain
                 for ox2, oy2 in [(-1,-1),(1,-1),(-1,1),(1,1),(0,-1),(0,1),(-1,0),(1,0)]:
                     draw.text((ax+ox2, ay+oy2), abbr, font=f_abbr, fill=(255,255,255,200))
@@ -312,7 +326,7 @@ def render_planet_map(
             lw  = (bb[2]-bb[0])/2
             lh  = (bb[3]-bb[1])/2
             lx2 = cx - lw
-            label_cy = cy - HEX_SIZE * 0.28 if _has_unit_markers(unit_data, key) else cy
+            label_cy = label_pos["coord_y"]
             ly2 = label_cy - lh
             # White shadow for contrast on dark tiles
             for ox2, oy2 in [(-1,-1),(1,-1),(-1,1),(1,1),(0,-1),(0,1),(-1,0),(1,0)]:
@@ -720,6 +734,8 @@ def render_movement_map(
         g       = t_def["fill"]
         b       = t_def["border"]
         corners = hex_corners(cx, cy, HEX_SIZE - 0.8)
+        occupied = _has_unit_markers(unit_data, key)
+        label_pos = _hex_label_positions(cx, cy, occupied)
 
         draw.polygon(corners, fill=(g, g, g, 255))
 
@@ -737,7 +753,7 @@ def render_movement_map(
             try:
                 bb  = draw.textbbox((0,0), abbr, font=f_abbr)
                 aw  = (bb[2]-bb[0])/2
-                ax, ay = cx-aw, cy - HEX_SIZE*0.52
+                ax, ay = cx-aw, label_pos["terrain_y"]
                 for dx2, dy2 in [(-1,-1),(1,-1),(-1,1),(1,1),(0,-1),(0,1),(-1,0),(1,0)]:
                     draw.text((ax+dx2, ay+dy2), abbr, font=f_abbr, fill=(255,255,255,200))
                 draw.text((ax, ay), abbr, font=f_abbr, fill=(0,0,0,255))
@@ -749,7 +765,7 @@ def render_movement_map(
             bb  = draw.textbbox((0,0), lbl, font=f_coord)
             lw2 = (bb[2]-bb[0])/2
             lh2 = (bb[3]-bb[1])/2
-            label_cy = cy - HEX_SIZE * 0.28 if _has_unit_markers(unit_data, key) else cy
+            label_cy = label_pos["coord_y"]
             lx2, ly2 = cx-lw2, label_cy-lh2
             for dx2, dy2 in [(-1,-1),(1,-1),(-1,1),(1,1),(0,-1),(0,1),(-1,0),(1,0)]:
                 draw.text((lx2+dx2, ly2+dy2), lbl, font=f_coord, fill=(255,255,255,200))
