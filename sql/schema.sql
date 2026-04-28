@@ -209,3 +209,34 @@ DO $$ BEGIN ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS announcement_chann
 DO $$ BEGIN UPDATE squadrons SET hp=100 WHERE hp <= 3; END $$;
 -- Migrate existing enemy_units that have no hp (NULL or 0) to 100
 DO $$ BEGIN UPDATE enemy_units SET hp=100 WHERE hp IS NULL OR hp = 0; END $$;
+
+-- Persistent per-turn movement arrows (cleared at the start of each new turn)
+CREATE TABLE IF NOT EXISTS movement_arrows (
+    id          SERIAL      PRIMARY KEY,
+    guild_id    BIGINT      NOT NULL,
+    planet_id   INT         NOT NULL DEFAULT 1,
+    from_addr   TEXT        NOT NULL,
+    to_addr     TEXT        NOT NULL,
+    side        TEXT        NOT NULL DEFAULT 'player',
+    owner_id    BIGINT      DEFAULT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_arrows_gp ON movement_arrows(guild_id, planet_id);
+
+-- Migration guard for existing databases
+DO $$ BEGIN
+    CREATE TABLE IF NOT EXISTS movement_arrows (
+        id          SERIAL      PRIMARY KEY,
+        guild_id    BIGINT      NOT NULL,
+        planet_id   INT         NOT NULL DEFAULT 1,
+        from_addr   TEXT        NOT NULL,
+        to_addr     TEXT        NOT NULL,
+        side        TEXT        NOT NULL DEFAULT 'player',
+        owner_id    BIGINT      DEFAULT NULL,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+EXCEPTION WHEN duplicate_table THEN NULL; END $$;
+DO $$ BEGIN
+    CREATE INDEX IF NOT EXISTS idx_arrows_gp ON movement_arrows(guild_id, planet_id);
+EXCEPTION WHEN duplicate_table THEN NULL; END $$;
