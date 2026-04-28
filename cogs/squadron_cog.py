@@ -9,6 +9,7 @@ Players interact via:
 
 import random
 import discord
+from discord import app_commands
 from discord.ext import commands
 
 from utils.db import get_pool, ensure_guild, get_theme, get_active_planet_id
@@ -20,6 +21,12 @@ from utils.brigades import (
     BRIGADES, BRIGADE_KEYS, get_brigade, brigade_stats,
     transit_turns, move_steps, can_direct_insert,
     can_scavenge_twice, scavenge_bonus, brigade_choices,
+)
+from utils.profiles import (
+    RECOVERY_STATUS,
+    clear_recovery,
+    ensure_commander_profile,
+    grant_default_banner,
 )
 
 
@@ -432,7 +439,7 @@ async def _do_list_units(interaction: discord.Interaction, guild_id: int):
 # BRIGADE PICKER  (triggered from EnlistView)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def brigade_picker_embed(unit_name: str) -> discord.Embed:
+def brigade_picker_embed(unit_name: str, returning: bool = False) -> discord.Embed:
     lines = []
     for key, b in BRIGADES.items():
         s = b["stats"]
@@ -444,8 +451,9 @@ def brigade_picker_embed(unit_name: str) -> discord.Embed:
             f"  Transit: {b['transit_turns']} turn(s)  ·  "
             + "  ·  ".join(b["specials"][:2])
         )
+    title = f"Deploy Returning Command - {unit_name}" if returning else f"Choose Your Brigade - {unit_name}"
     return discord.Embed(
-        title=f"Choose Your Brigade — {unit_name}",
+        title=title,
         description="\n\n".join(lines),
         color=0xAA2222,
     ).set_footer(text="Select your brigade from the dropdown below.")
@@ -516,19 +524,23 @@ class DeployModal(discord.ui.Modal, title="Deploy Your Unit"):
                 await interaction.followup.send(
                     "You already have an active unit.", ephemeral=True); return
 
-            # Block re-enlist if they have a dead unit (hp=0) this contract
+            # Total loss removes this command from the map until a new contract starts.
             dead = await conn.fetchrow(
                 "SELECT id FROM squadrons "
                 "WHERE guild_id=$1 AND planet_id=$2 AND owner_id=$3 AND hp<=0",
                 self.guild_id, planet_id, interaction.user.id)
             if dead:
                 await interaction.followup.send(
-                    "❌ Your unit was **permanently destroyed** this contract. "
-                    "You cannot re-enlist until the GM concludes the current contract.",
+                    "Your command is recovering from total loss of unit cohesion. "
+                    "You can deploy again when the next contract opens.",
                     ephemeral=True); return
 
             stats = brigade_stats(self.brigade)
             v     = lambda base: base + random.randint(-1, 2)
+            await ensure_commander_profile(
+                conn, self.guild_id, interaction.user.id, interaction.user.display_name)
+            await grant_default_banner(conn, self.guild_id, interaction.user.id)
+            await clear_recovery(conn, self.guild_id, interaction.user.id)
             await conn.execute("""
                 INSERT INTO squadrons
                   (guild_id, planet_id, owner_id, owner_name, name, brigade, hex_address,
@@ -574,7 +586,7 @@ class DeployModal(discord.ui.Modal, title="Deploy Your Unit"):
 
         brig = get_brigade(self.brigade)
         embed = discord.Embed(
-            title=f"{brig['emoji']} Enlisted — {self.unit_name}",
+            title=f"Commandant Deployed - {self.unit_name}",
             color=theme.get("color", 0xAA2222),
             description=(
                 f"**Brigade:** {brig['name']}\n"
@@ -855,6 +867,114 @@ class StepSelect(discord.ui.Select):
 
 
 
+# -----------------------------------------------------------------------------
+# PLAYER PANEL
+# -----------------------------------------------------------------------------
+
+async def _build_commander_file_embed(conn, guild_id: int, user, theme: dict) -> discord.Embed:
+    planet_id = await get_active_planet_id(conn, guild_id)
+    await ensure_commander_profile(conn, guild_id, user.id, user.display_name)
+    await grant_default_banner(conn, guild_id, user.id)
+
+    profile = await conn.fetchrow(
+        "SELECT * FROM commander_profiles WHERE guild_id=$1 AND owner_id=$2",
+        guild_id, user.id)
+    active = await conn.fetchrow(
+        "SELECT name, brigade, hex_address, hp, supply, morale FROM squadrons "
+        "WHERE guild_id=$1 AND planet_id=$2 AND owner_id=$3 AND is_active=TRUE LIMIT 1",
+        guild_id, planet_id, user.id)
+    banner = await conn.fetchrow("""
+        SELECT b.name, b.image_url
+        FROM commander_profiles p
+        JOIN cosmetic_banners b
+          ON b.guild_id=p.guild_id
+         AND b.banner_key=COALESCE(p.selected_banner_key, 'standard')
+        WHERE p.guild_id=$1 AND p.owner_id=$2
+    """, guild_id, user.id)
+    badges = await conn.fetch("""
+        SELECT b.symbol, b.text
+        FROM commander_badges cb
+        JOIN cosmetic_badges b
+          ON b.guild_id=cb.guild_id AND b.badge_key=cb.badge_key
+        WHERE cb.guild_id=$1 AND cb.owner_id=$2
+        ORDER BY b.text
+        LIMIT 8
+    """, guild_id, user.id)
+
+    status = profile["recovery_status"] if profile and profile["recovery_status"] else "fit for deployment"
+    if active:
+        brig = get_brigade(active["brigade"])
+        status = (
+            f"deployed with **{active['name']}** ({brig['name']}) at `{active['hex_address']}`\n"
+            f"HP {active['hp'] or 100}/100 | Supply {active['supply']} | Morale {active['morale']}"
+        )
+
+    embed = discord.Embed(
+        title=f"Command File - {user.display_name}",
+        color=theme.get("color", 0xAA2222),
+        description=(
+            f"**Rank:** Commandant\n"
+            f"**Status:** {status}\n\n"
+            "Filed under contract authority. The commandant remains on roster between contracts; "
+            "only deployed units are wiped from the theatre map."
+        ),
+    )
+    embed.set_thumbnail(url=user.display_avatar.url)
+    if banner and banner["image_url"]:
+        embed.set_image(url=banner["image_url"])
+        embed.set_footer(text=f"Banner: {banner['name']}")
+    if badges:
+        embed.add_field(
+            name="Badges",
+            value="\n".join(f"{r['symbol']} {r['text']}" for r in badges),
+            inline=False)
+    else:
+        embed.add_field(name="Badges", value="No cosmetic badges assigned.", inline=False)
+    return embed
+
+
+class PlayerPanelView(discord.ui.View):
+    def __init__(self, bot, guild_id: int):
+        super().__init__(timeout=300)
+        self.bot = bot
+        self.guild_id = guild_id
+
+    @discord.ui.button(label="My File", style=discord.ButtonStyle.primary, row=0)
+    async def my_file(self, i: discord.Interaction, b: discord.ui.Button):
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            theme = await get_theme(conn, i.guild_id)
+            embed = await _build_commander_file_embed(conn, i.guild_id, i.user, theme)
+        await i.response.send_message(embed=embed, ephemeral=True)
+
+    @discord.ui.button(label="Enlist", style=discord.ButtonStyle.success, row=0)
+    async def enlist(self, i: discord.Interaction, b: discord.ui.Button):
+        from views.menu import _UnitNameModal
+        await i.response.send_modal(_UnitNameModal(i.guild_id, returning=False))
+
+    @discord.ui.button(label="Deploy", style=discord.ButtonStyle.primary, row=0)
+    async def deploy(self, i: discord.Interaction, b: discord.ui.Button):
+        from views.menu import _UnitNameModal
+        await i.response.send_modal(_UnitNameModal(i.guild_id, returning=True))
+
+    @discord.ui.button(label="My Unit", style=discord.ButtonStyle.secondary, row=1)
+    async def my_unit(self, i: discord.Interaction, b: discord.ui.Button):
+        await send_unit_panel(i, self.guild_id)
+
+
+def _player_panel_embed(theme: dict) -> discord.Embed:
+    bot_name = theme.get("bot_name", "WARBOT")
+    return discord.Embed(
+        title=f"{bot_name} - Player Panel",
+        color=theme.get("color", 0xAA2222),
+        description=(
+            "**Commandant access granted.**\n"
+            "Open your file, enlist a first unit, redeploy into a fresh contract, "
+            "or check your current field unit."
+        ),
+    ).set_footer(text=theme.get("flavor_text", "The contract must be fulfilled."))
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # COG (minimal — only registers persistent views on startup)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -862,6 +982,21 @@ class StepSelect(discord.ui.Select):
 class SquadronCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+
+    @app_commands.command(name="player_panel", description="Open your commandant panel.")
+    async def player_panel(self, interaction: discord.Interaction):
+        await ensure_guild(interaction.guild_id)
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            theme = await get_theme(conn, interaction.guild_id)
+            await ensure_commander_profile(
+                conn, interaction.guild_id,
+                interaction.user.id, interaction.user.display_name)
+            await grant_default_banner(conn, interaction.guild_id, interaction.user.id)
+        await interaction.response.send_message(
+            embed=_player_panel_embed(theme),
+            view=PlayerPanelView(self.bot, interaction.guild_id),
+            ephemeral=True)
 
 
 async def setup(bot):
