@@ -70,13 +70,14 @@ LEGEND_H  = 100
 # ── Planet map ─────────────────────────────────────────────────────────────────
 
 def render_planet_map(
-    planet_name: str,
-    contractor:  str,
-    enemy_type:  str,
-    hex_data:    dict,   # {"gq,gr": {"terrain": str, "status": str}}
-    unit_data:   dict,   # {"gq,gr": {"players": N, "enemy": N}}
-    turn_number: int = 1,
-    theme:       dict = None,
+    planet_name:     str,
+    contractor:      str,
+    enemy_type:      str,
+    hex_data:        dict,   # {"gq,gr": {"terrain": str, "status": str}}
+    unit_data:       dict,   # {"gq,gr": {"players": N, "enemy": N}}
+    turn_number:     int = 1,
+    theme:           dict = None,
+    movement_arrows: list = None,  # [(from_addr, to_addr, "player"|"enemy"), ...]
 ) -> io.BytesIO:
 
     if theme is None:
@@ -275,6 +276,45 @@ def render_planet_map(
     except Exception:
         pass
 
+    # ── Movement arrows overlay ───────────────────────────────────────────────
+    if movement_arrows:
+        draw = ImageDraw.Draw(img)
+        f_arrow = _font(_SANS, 7)
+        for (from_addr, to_addr, side) in movement_arrows:
+            try:
+                fq, fr = map(int, from_addr.split(","))
+                tq, tr = map(int, to_addr.split(","))
+                fcx, fcy = hex_center(fq, fr, HEX_SIZE, ox, oy)
+                tcx, tcy = hex_center(tq, tr, HEX_SIZE, ox, oy)
+                dx = tcx - fcx
+                dy = tcy - fcy
+                dist = math.sqrt(dx*dx + dy*dy) or 1
+                ux, uy = dx/dist, dy/dist
+                # Offset start/end so arrows don't overlap unit markers
+                sx = fcx + ux * HEX_SIZE * 0.45
+                sy = fcy + uy * HEX_SIZE * 0.45
+                ex = tcx - ux * HEX_SIZE * 0.45
+                ey = tcy - uy * HEX_SIZE * 0.45
+                # Color: cyan for player, orange for enemy
+                arrow_col = (80, 220, 255, 220) if side == "player" else (255, 160, 40, 220)
+                outline_col = (0, 0, 0, 180)
+                # Shaft
+                for w, col in [(5, outline_col), (3, arrow_col)]:
+                    draw.line((sx, sy, ex, ey), fill=col, width=w)
+                # Arrowhead
+                perp_x, perp_y = -uy, ux
+                hs = HEX_SIZE * 0.32
+                tip_x = tcx - ux * HEX_SIZE * 0.28
+                tip_y = tcy - uy * HEX_SIZE * 0.28
+                lx2 = ex + perp_x * hs * 0.5
+                ly2 = ey + perp_y * hs * 0.5
+                rx2 = ex - perp_x * hs * 0.5
+                ry2 = ey - perp_y * hs * 0.5
+                draw.polygon([(tip_x, tip_y), (lx2, ly2), (rx2, ry2)],
+                             fill=arrow_col, outline=outline_col)
+            except Exception:
+                pass
+
     _compass(draw, img_w-50, TITLE_H+46, 18, f_legend)
     draw.rectangle((1,1,img_w-2,img_h-2), outline=(65,65,65,255), width=3)
 
@@ -394,7 +434,8 @@ def render_planetary_system_overview(
 
 # ── DB-backed helpers ──────────────────────────────────────────────────────────
 
-async def render_map_for_guild(guild_id: int, conn, planet_id: int = None) -> io.BytesIO:
+async def render_map_for_guild(guild_id: int, conn, planet_id: int = None,
+                               movement_arrows: list = None) -> io.BytesIO:
     from utils.db import get_theme, get_active_planet_id
 
     if planet_id is None:
@@ -456,14 +497,23 @@ async def render_map_for_guild(guild_id: int, conn, planet_id: int = None) -> io
         "SELECT COUNT(*) FROM turn_history WHERE guild_id=$1", guild_id) or 0
     theme = await get_theme(conn, guild_id)
 
+    # Filter movement arrows by fog of war — enemy arrows only if visible
+    filtered_arrows = []
+    for (fa, ta, side) in (movement_arrows or []):
+        if side == "player":
+            filtered_arrows.append((fa, ta, side))
+        elif side == "enemy" and (fa in visible_hexes or ta in visible_hexes):
+            filtered_arrows.append((fa, ta, side))
+
     return render_planet_map(
-        planet_name = planet_name,
-        contractor  = contractor,
-        enemy_type  = enemy_type,
-        hex_data    = hex_data,
-        unit_data   = unit_data,
-        turn_number = int(turn_count) + 1,
-        theme       = theme,
+        planet_name     = planet_name,
+        contractor      = contractor,
+        enemy_type      = enemy_type,
+        hex_data        = hex_data,
+        unit_data       = unit_data,
+        turn_number     = int(turn_count) + 1,
+        theme           = theme,
+        movement_arrows = filtered_arrows,
     )
 
 
@@ -735,10 +785,12 @@ async def render_movement_map_for_guild(
     )
 
 
-async def render_gm_map_for_guild(guild_id: int, conn, planet_id: int = None) -> io.BytesIO:
+async def render_gm_map_for_guild(guild_id: int, conn, planet_id: int = None,
+                                  movement_arrows: list = None) -> io.BytesIO:
     """
     Render a GM-only map that shows ALL unit locations with detailed labels.
     Player units shown in blue with name, enemy units shown in red with ID+type.
+    Movement arrows shown for all units (player=cyan, enemy=orange).
     """
     from utils.db import get_theme, get_active_planet_id
 
@@ -806,13 +858,14 @@ async def render_gm_map_for_guild(guild_id: int, conn, planet_id: int = None) ->
     theme = await get_theme(conn, guild_id)
 
     buf = render_planet_map(
-        planet_name = f"[GM] {planet_name}",
-        contractor  = contractor,
-        enemy_type  = enemy_type,
-        hex_data    = hex_data,
-        unit_data   = unit_data,
-        turn_number = int(turn_count) + 1,
-        theme       = theme,
+        planet_name     = f"[GM] {planet_name}",
+        contractor      = contractor,
+        enemy_type      = enemy_type,
+        hex_data        = hex_data,
+        unit_data       = unit_data,
+        turn_number     = int(turn_count) + 1,
+        theme           = theme,
+        movement_arrows = movement_arrows or [],
     )
 
     img  = Image.open(buf).convert("RGBA")
