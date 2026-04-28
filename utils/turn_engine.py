@@ -29,7 +29,7 @@ from utils.brigades import (
 )
 from utils.hexmap import (
     GRID_COORDS, GRID_SET,
-    hex_key, parse_hex, hex_neighbors, hex_distance,
+    hex_key, parse_hex, hex_neighbors, hex_distance, is_valid,
     hex_ring_keys, nearest_hex, step_toward,
     outermost_hexes, recompute_statuses,
     STATUS_PLAYER, STATUS_ENEMY,
@@ -377,8 +377,9 @@ class TurnEngine:
                     guild_id, planet_id)
                 candidates = [r["address"] for r in all_hexes
                               if r["controller"] in ("players", "neutral")
-                              and r["address"] != hex_addr]
-                retreat = nearest_hex(hex_addr, candidates)
+                              and r["address"] != hex_addr
+                              and is_valid(r["address"])]
+                retreat = nearest_hex(hex_addr, candidates) if candidates else None
                 if retreat:
                     sq_ids = await conn.fetch(
                         "SELECT id, name, owner_name FROM squadrons "
