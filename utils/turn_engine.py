@@ -108,14 +108,16 @@ class TurnEngine:
             "SELECT COUNT(*) FROM turn_history WHERE guild_id=$1 AND planet_id=$2",
             guild_id, planet_id) or 0) + 1
         summaries = []
+        # movement_arrows: list of (from_addr, to_addr, "player"|"enemy")
+        movement_arrows: list = []
 
         log.info(f"[{guild_id}] Turn {turn_num} on {planet_name}")
 
         async with conn.transaction():
-            await self._transit(conn, guild_id, planet_id, summaries, theme)
+            await self._transit(conn, guild_id, planet_id, summaries, theme, movement_arrows)
             await self._gm_moves(conn, guild_id, planet_id, summaries, theme)
-            await self._enemy_ai(conn, guild_id, planet_id, summaries, theme, enemy_type)
-            await self._combat(conn, guild_id, planet_id, turn_num, summaries, theme, enemy_type)
+            await self._enemy_ai(conn, guild_id, planet_id, summaries, theme, enemy_type, movement_arrows)
+            await self._combat(conn, guild_id, planet_id, turn_num, summaries, theme, enemy_type, movement_arrows)
             await self._supply(conn, guild_id, planet_id, summaries, theme)
             await recompute_statuses(conn, guild_id, planet_id)
 
@@ -142,13 +144,13 @@ class TurnEngine:
         await self._post(guild_id, planet_name, turn_num, summaries, theme)
         try:
             from cogs.map_cog import auto_update_map
-            await auto_update_map(self.bot, guild_id)
+            await auto_update_map(self.bot, guild_id, movement_arrows=movement_arrows)
         except Exception as e:
             log.warning(f"auto_update_map: {e}")
 
     # ── Transit ───────────────────────────────────────────────────────────────
 
-    async def _transit(self, conn, guild_id, planet_id, summaries, theme):
+    async def _transit(self, conn, guild_id, planet_id, summaries, theme, movement_arrows):
         rows = await conn.fetch(
             "SELECT id, name, owner_name, brigade, hex_address, "
             "transit_destination, transit_turns_left "
@@ -160,6 +162,7 @@ class TurnEngine:
             turns_left = sq["transit_turns_left"] - 1
             dest       = sq["transit_destination"]
             if turns_left <= 0:
+                movement_arrows.append((sq["hex_address"], dest, "player"))
                 await conn.execute(
                     "UPDATE squadrons SET hex_address=$1, in_transit=FALSE, "
                     "transit_destination=NULL, transit_turns_left=0 WHERE id=$2",
@@ -170,6 +173,8 @@ class TurnEngine:
             else:
                 # Step one hex closer each turn
                 next_hex = step_toward(sq["hex_address"], dest)
+                if next_hex != sq["hex_address"]:
+                    movement_arrows.append((sq["hex_address"], next_hex, "player"))
                 await conn.execute(
                     "UPDATE squadrons SET hex_address=$1, transit_turns_left=$2 WHERE id=$3",
                     next_hex, turns_left, sq["id"])
@@ -192,7 +197,7 @@ class TurnEngine:
 
     # ── Enemy AI ──────────────────────────────────────────────────────────────
 
-    async def _enemy_ai(self, conn, guild_id, planet_id, summaries, theme, enemy_type):
+    async def _enemy_ai(self, conn, guild_id, planet_id, summaries, theme, enemy_type, movement_arrows):
         # AI spawning has been removed — only GMs may spawn enemy units.
         # Existing units (not GM-moved this turn) move toward player positions automatically.
         units = await conn.fetch(
@@ -215,6 +220,7 @@ class TurnEngine:
             else:
                 target = step_toward(addr, "0,0")
             if target != addr:
+                movement_arrows.append((addr, target, "enemy"))
                 await conn.execute(
                     "UPDATE enemy_units SET hex_address=$1 WHERE id=$2",
                     target, unit["id"])
@@ -222,7 +228,7 @@ class TurnEngine:
     # ── Combat ────────────────────────────────────────────────────────────────
 
     async def _combat(self, conn, guild_id, planet_id, turn_num,
-                       summaries, theme, enemy_type):
+                       summaries, theme, enemy_type, movement_arrows):
         p_rows = await conn.fetch(
             "SELECT id, hex_address, owner_id, owner_name, name, brigade, "
             "attack, defense, speed, morale, supply, recon, is_dug_in, artillery_armed, hp "
@@ -375,13 +381,18 @@ class TurnEngine:
                                 f"**{result.attacker_damage} damage** (`{new_hp} HP` remaining).")
 
                 # ── Determine hex control and routing ─────────────────────────
+                # Routing only triggers when the winning roll is >= 10
                 if result.outcome == "attacker_wins":
                     final_ctrl = "players"
+                    if result.attacker_roll >= 10:
+                        # Enemy routed — mark it (already dead or retreating handled by HP)
+                        pass
                 elif result.outcome == "defender_wins":
-                    final_ctrl    = "enemy"
-                    player_routed = True
-                    fatigue      += 1
-                    break
+                    final_ctrl = "enemy"
+                    fatigue   += 1
+                    if result.defender_roll >= 10:
+                        player_routed = True
+                        break
                 else:
                     final_ctrl = "neutral"
                     fatigue   += 1
@@ -435,6 +446,7 @@ class TurnEngine:
                         await conn.execute(
                             "UPDATE squadrons SET hex_address=$1 WHERE id=$2",
                             retreat, sq["id"])
+                    movement_arrows.append((hex_addr, retreat, "player"))
                     summaries.append(
                         f"🔙 **{pl}** routed from `{hex_addr}` → fell back to `{retreat}`.")
 
