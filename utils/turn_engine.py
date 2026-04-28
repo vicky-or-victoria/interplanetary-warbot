@@ -148,6 +148,16 @@ class TurnEngine:
         except Exception as e:
             log.warning(f"auto_update_map: {e}")
 
+        # Clear persisted player movement arrows — new turn = blank slate
+        try:
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    "DELETE FROM movement_arrows WHERE guild_id=$1 AND planet_id=$2",
+                    guild_id, planet_id)
+        except Exception as e:
+            log.warning(f"movement_arrows clear: {e}")
+
     # ── Transit ───────────────────────────────────────────────────────────────
 
     async def _transit(self, conn, guild_id, planet_id, summaries, theme, movement_arrows):
