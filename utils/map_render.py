@@ -525,11 +525,15 @@ def render_movement_map(
     unit_name:  str,
     theme:      dict = None,
     zoom_radius: int = 5,
+    remaining:  int = None,   # hexes left in turn budget — drives range ring
+    budget:     int = None,   # total hex budget this turn
 ) -> io.BytesIO:
     """
     Renders a cropped map centered on the movement path, with a colored arrow
     showing the unit's movement from from_addr to to_addr.
     zoom_radius controls how many hex-rings around the movement are visible.
+    When remaining/budget are supplied, a range ring overlay is drawn showing
+    reachable hexes (teal) and already-used range (faint red wash).
     """
     if theme is None:
         theme = _default_theme()
@@ -610,6 +614,43 @@ def render_movement_map(
             draw.text((lx2, ly2), lbl, font=f_coord, fill=(0,0,0,255))
         except Exception:
             pass
+
+    # ── Range ring overlay (drawn before unit markers so markers sit on top) ──
+    if remaining is not None and budget is not None:
+        used = budget - remaining
+        # Hexes reachable from current position (to_addr) within remaining steps
+        reachable_set  = set(hexes_within(to_addr, remaining))   if remaining > 0 else set()
+        # Hexes that WERE reachable from the starting hex but are now spent
+        spent_set      = set(hexes_within(from_addr, used))      if used > 0 else set()
+        spent_only_set = spent_set - reachable_set - {to_addr}
+
+        range_layer = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
+        rd = ImageDraw.Draw(range_layer)
+
+        for gq, gr in GRID_COORDS:
+            key    = hex_key(gq, gr)
+            cx, cy = hex_center(gq, gr, HEX_SIZE, ox, oy)
+            corners = hex_corners(cx, cy, HEX_SIZE - 1.5)
+            if key == to_addr:
+                # Current position — bright teal fill
+                rd.polygon(corners, fill=(40, 210, 180, 90))
+                rd.polygon(corners, outline=(40, 220, 190, 230), width=2)
+            elif key in reachable_set:
+                # Within remaining range — soft teal tint
+                rd.polygon(corners, fill=(20, 180, 150, 48))
+                rd.polygon(corners, outline=(40, 200, 170, 140), width=1)
+            elif key in spent_only_set:
+                # Used-up range — faint red wash, no outline
+                rd.polygon(corners, fill=(200, 50, 50, 28))
+
+        img  = Image.alpha_composite(img, range_layer)
+        draw = ImageDraw.Draw(img)
+
+        # ── Range budget bar drawn at top of cropped area ──────────────────
+        # Will be rendered after cropping; store values for later
+        _range_bar_data = (remaining, budget)
+    else:
+        _range_bar_data = None
 
     # Unit markers pass
     draw = ImageDraw.Draw(img)
@@ -719,6 +760,67 @@ def render_movement_map(
 
     final = Image.new("RGB", cropped.size, (BG, BG, BG))
     final.paste(cropped, mask=cropped.split()[3])
+
+    # ── Movement budget bar — drawn onto the final cropped image ──────────────
+    if _range_bar_data is not None:
+        rem_b, bud_b = _range_bar_data
+        fd   = ImageDraw.Draw(final)
+        fw   = final.width
+        f_hud = _font(_SANS, 9)
+
+        # Bar geometry
+        bar_x    = 10
+        bar_y    = TITLE_H + 6
+        bar_h    = 10
+        bar_maxw = fw - 20
+        cell_gap = 3
+
+        if bud_b > 0:
+            cell_w = max(8, (bar_maxw - cell_gap * (bud_b - 1)) // bud_b)
+            total_bar_w = cell_w * bud_b + cell_gap * (bud_b - 1)
+
+            for i in range(bud_b):
+                cx2 = bar_x + i * (cell_w + cell_gap)
+                filled = i < rem_b
+                # Color shifts: green → amber → red as remaining drops
+                ratio = rem_b / bud_b if bud_b > 0 else 0
+                if ratio > 0.5:
+                    fill_col  = (29, 158, 117, 255)   # teal/green
+                    out_col   = (60, 200, 160, 200)
+                elif ratio > 0:
+                    fill_col  = (186, 117, 23, 255)   # amber
+                    out_col   = (220, 160, 50, 200)
+                else:
+                    fill_col  = (30, 30, 30, 255)     # exhausted — dark
+                    out_col   = (80, 80, 80, 180)
+
+                empty_col = (35, 35, 35, 255)
+                empty_out = (70, 70, 70, 160)
+
+                if filled:
+                    fd.rectangle((cx2, bar_y, cx2+cell_w, bar_y+bar_h),
+                                 fill=fill_col, outline=out_col, width=1)
+                else:
+                    fd.rectangle((cx2, bar_y, cx2+cell_w, bar_y+bar_h),
+                                 fill=empty_col, outline=empty_out, width=1)
+
+            # Label to the right of bar
+            label_x = bar_x + total_bar_w + 8
+            label   = f"{rem_b}/{bud_b} hexes"
+            if rem_b == 0:
+                label_col = (180, 60, 60, 255)
+                label = "EXHAUSTED"
+            elif rem_b <= 1:
+                label_col = (210, 140, 40, 255)
+            else:
+                label_col = (80, 210, 170, 255)
+            try:
+                for dx2, dy2 in [(-1,-1),(1,-1),(-1,1),(1,1)]:
+                    fd.text((label_x+dx2, bar_y+dy2), label, font=f_hud, fill=(0,0,0,180))
+                fd.text((label_x, bar_y), label, font=f_hud, fill=label_col)
+            except Exception:
+                pass
+
     out = io.BytesIO()
     final.save(out, format="PNG", optimize=True)
     out.seek(0)
@@ -732,6 +834,8 @@ async def render_movement_map_for_guild(
     to_addr:   str,
     unit_name: str,
     planet_id: int = None,
+    remaining: int = None,
+    budget:    int = None,
 ) -> io.BytesIO:
     from utils.db import get_theme, get_active_planet_id
 
@@ -782,6 +886,8 @@ async def render_movement_map_for_guild(
         to_addr    = to_addr,
         unit_name  = unit_name,
         theme      = theme,
+        remaining  = remaining,
+        budget     = budget,
     )
 
 
