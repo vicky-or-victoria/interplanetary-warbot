@@ -57,7 +57,7 @@ def hex_key(gq: int, gr: int) -> str:
     return f"{gq},{gr}"
 
 def parse_hex(key: str) -> Tuple[int, int]:
-    q, r = key.split(",")
+    q, r = key.split(",", 1)
     return int(q), int(r)
 
 def is_valid(key: str) -> bool:
