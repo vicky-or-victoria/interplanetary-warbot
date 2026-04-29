@@ -288,7 +288,8 @@ def _shade_color(color, amount):
 def _terrain_variation(key):
     # Deterministic per-hex variation, so regenerated maps do not shimmer.
     seed = sum((idx + 1) * ord(ch) for idx, ch in enumerate(key))
-    return (seed % 17) - 8
+    rng = random.Random(seed)
+    return tuple(rng.randint(-10, 10) for _ in range(3))
 
 
 def _terrain_border(fill):
@@ -377,31 +378,19 @@ def draw_terrain_hex(draw, hex_points, terrain_type, center):
     terrain = _terrain_key(terrain_type)
     base = TERRAIN_DEFS[terrain]["color"]
     key = f"{int(center[0])},{int(center[1])}:{terrain}"
-    fill = _shade_color(base, _terrain_variation(key))
+    variation = _terrain_variation(key)
+    fill = tuple(max(0, min(255, base[idx] + variation[idx])) for idx in range(3))
     border = _terrain_border(fill)
 
     draw.polygon(hex_points, fill=(*fill, 255))
 
-    cx, cy = center
-    top = [
-        hex_points[2],
-        hex_points[3],
-        (cx, cy),
-        hex_points[4],
-    ]
-    bottom = [
-        hex_points[5],
-        hex_points[0],
-        (cx, cy),
-        hex_points[1],
-    ]
-    draw.polygon(top, fill=(255, 255, 255, 22))
-    draw.polygon(bottom, fill=(0, 0, 0, 24))
-
-    if terrain == "water":
-        for idx in (1, 3, 5):
-            x = cx + (idx - 3) * 2
-            draw.point((x, cy + idx), fill=(255, 255, 255, 45))
+    # A single broad wash gives depth without subdividing the hex into visible facets.
+    x_vals = [p[0] for p in hex_points]
+    y_vals = [p[1] for p in hex_points]
+    x1, x2 = min(x_vals), max(x_vals)
+    y1, y2 = min(y_vals), max(y_vals)
+    draw.line((x1 + 4, y1 + 4, x2 - 4, y1 + 4), fill=(255, 255, 255, 26), width=1)
+    draw.line((x1 + 4, y2 - 4, x2 - 4, y2 - 4), fill=(0, 0, 0, 22), width=1)
 
     draw_terrain_icon(draw, center, terrain, HEX_SIZE)
     draw.polygon(hex_points, outline=(*border, 255), width=1)
