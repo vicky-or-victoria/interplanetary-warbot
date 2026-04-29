@@ -225,17 +225,43 @@ _SANSREG = ["/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
 
 # ── Terrain ────────────────────────────────────────────────────────────────────
 
-TERRAIN_TYPES = ["flat", "forest", "hill", "mountain", "fort", "city", "military"]
+HEX_DIRECTIONS = [
+    (1, 0), (1, -1), (0, -1),
+    (-1, 0), (-1, 1), (0, 1),
+]
+
+TERRAIN_TYPES = ["plains", "forest", "hills", "mountain", "fort", "city", "military", "water"]
+
+TERRAIN_ALIASES = {
+    "flat": "plains",
+    "plain": "plains",
+    "plains": "plains",
+    "forest": "forest",
+    "hill": "hills",
+    "hills": "hills",
+    "mountain": "mountain",
+    "mtn": "mountain",
+    "fort": "fort",
+    "city": "city",
+    "military": "military",
+    "water": "water",
+    "ocean": "water",
+    "sea": "water",
+}
 
 TERRAIN_DEFS = {
-    "flat":     {"fill": 195, "border": 155, "label": "Flat",     "abbr": ""},
-    "forest":   {"fill": 138, "border": 102, "label": "Forest",   "abbr": "Fst"},
-    "hill":     {"fill": 166, "border": 126, "label": "Hills",    "abbr": "Hll"},
-    "mountain": {"fill": 108, "border":  72, "label": "Mtn",      "abbr": "Mtn"},
-    "fort":     {"fill": 180, "border": 136, "label": "Fort",     "abbr": "Frt"},
-    "city":     {"fill": 215, "border": 165, "label": "City",     "abbr": "Cty"},
-    "military": {"fill": 155, "border": 110, "label": "Military", "abbr": "Mil"},
+    "plains":   {"color": (220, 210, 180), "label": "Plains"},
+    "forest":   {"color": (120, 160, 120), "label": "Forest"},
+    "hills":    {"color": (170, 140, 100), "label": "Hills"},
+    "mountain": {"color": (100, 100, 100), "label": "Mountain"},
+    "city":     {"color": (160, 170, 180), "label": "City"},
+    "fort":     {"color": (130, 140, 160), "label": "Fort"},
+    "military": {"color": (110, 130, 100), "label": "Military"},
+    "water":    {"color": (55, 95, 125),   "label": "Water"},
 }
+
+COASTLINE = (210, 190, 135, 255)
+COASTLINE_DARK = (120, 105, 75, 230)
 
 STATUS_TINTS = {
     "players":         (70,  90, 210, 78),
@@ -245,6 +271,151 @@ STATUS_TINTS = {
     "contested":       (155,  75, 155, 68),
     "neutral":         (0,     0,   0,  0),
 }
+
+
+def _terrain_key(terrain_type):
+    return TERRAIN_ALIASES.get(str(terrain_type or "plains").lower(), "plains")
+
+
+def get_neighbors(q, r):
+    return [(q + dq, r + dr) for dq, dr in HEX_DIRECTIONS]
+
+
+def _shade_color(color, amount):
+    return tuple(max(0, min(255, int(c + amount))) for c in color)
+
+
+def _terrain_variation(key):
+    # Deterministic per-hex variation, so regenerated maps do not shimmer.
+    seed = sum((idx + 1) * ord(ch) for idx, ch in enumerate(key))
+    return (seed % 17) - 8
+
+
+def _terrain_border(fill):
+    return tuple(max(0, int(c * 0.68)) for c in fill)
+
+
+def _edge_points(hex_points, direction_index):
+    # PIL hex corner order from hex_corners is clockwise-ish; this maps axial
+    # directions to the corresponding visible side well enough for coastlines.
+    edge_map = {
+        0: (5, 0),  # east
+        1: (4, 5),  # north-east
+        2: (3, 4),  # north-west
+        3: (2, 3),  # west
+        4: (1, 2),  # south-west
+        5: (0, 1),  # south-east
+    }
+    a, b = edge_map[direction_index]
+    return hex_points[a], hex_points[b]
+
+
+def draw_terrain_icon(draw, center, terrain_type, size):
+    terrain = _terrain_key(terrain_type)
+    cx, cy = center
+    s = max(7, int(size * 0.32))
+
+    if terrain == "forest":
+        fills = [(42, 92, 52, 210), (55, 110, 62, 210), (35, 78, 48, 210)]
+        offsets = [(-s * .30, s * .06), (0, -s * .08), (s * .30, s * .08)]
+        for idx, (ox, oy) in enumerate(offsets):
+            x = cx + ox
+            y = cy + oy
+            draw.polygon(
+                [(x, y - s * .42), (x - s * .28, y + s * .22), (x + s * .28, y + s * .22)],
+                fill=fills[idx],
+                outline=(24, 55, 34, 190),
+            )
+            draw.line((x, y + s * .08, x, y + s * .34), fill=(60, 45, 30, 180), width=1)
+    elif terrain == "mountain":
+        draw.polygon(
+            [(cx - s * .58, cy + s * .30), (cx - s * .08, cy - s * .55), (cx + s * .22, cy + s * .30)],
+            fill=(78, 78, 78, 230),
+            outline=(45, 45, 45, 210),
+        )
+        draw.polygon(
+            [(cx - s * .12, cy + s * .32), (cx + s * .36, cy - s * .46), (cx + s * .68, cy + s * .32)],
+            fill=(92, 92, 92, 230),
+            outline=(45, 45, 45, 210),
+        )
+        draw.polygon([(cx - s * .16, cy - s * .42), (cx - s * .08, cy - s * .55), (cx, cy - s * .36)], fill=(215, 215, 205, 190))
+        draw.polygon([(cx + s * .28, cy - s * .34), (cx + s * .36, cy - s * .46), (cx + s * .44, cy - s * .30)], fill=(215, 215, 205, 190))
+    elif terrain == "hills":
+        for ox, scale in [(-s * .28, .75), (s * .18, .95)]:
+            box = (cx + ox - s * scale * .50, cy - s * .08, cx + ox + s * scale * .50, cy + s * .55)
+            draw.arc(box, start=180, end=360, fill=(95, 72, 50, 210), width=2)
+    elif terrain == "city":
+        col = (92, 102, 112, 220)
+        outline = (45, 50, 56, 210)
+        draw.rectangle((cx - s * .45, cy - s * .10, cx - s * .18, cy + s * .32), fill=col, outline=outline)
+        draw.rectangle((cx - s * .12, cy - s * .34, cx + s * .14, cy + s * .32), fill=(105, 114, 124, 220), outline=outline)
+        draw.rectangle((cx + s * .20, cy - s * .02, cx + s * .48, cy + s * .32), fill=col, outline=outline)
+    elif terrain == "fort":
+        draw.rectangle((cx - s * .48, cy - s * .16, cx + s * .48, cy + s * .24), fill=(78, 86, 105, 220), outline=(42, 46, 58, 220))
+        for idx in range(3):
+            x = cx - s * .36 + idx * s * .36
+            draw.rectangle((x, cy - s * .34, x + s * .18, cy - s * .16), fill=(78, 86, 105, 220), outline=(42, 46, 58, 220))
+    elif terrain == "military":
+        draw.arc((cx - s * .42, cy - s * .36, cx + s * .42, cy + s * .48), start=190, end=350, fill=(45, 65, 42, 230), width=3)
+        draw.rectangle((cx - s * .40, cy + s * .10, cx + s * .40, cy + s * .28), fill=(45, 65, 42, 230))
+        draw.line((cx - s * .28, cy + s * .28, cx + s * .28, cy + s * .28), fill=(20, 34, 20, 210), width=2)
+    elif terrain == "water":
+        wave = (155, 195, 210, 115)
+        for oy in (-s * .16, s * .18):
+            pts = [
+                (cx - s * .42, cy + oy),
+                (cx - s * .16, cy + oy - s * .10),
+                (cx + s * .10, cy + oy),
+                (cx + s * .36, cy + oy - s * .10),
+            ]
+            draw.line(pts, fill=wave, width=2, joint="curve")
+    elif terrain == "plains":
+        return
+
+
+def draw_terrain_hex(draw, hex_points, terrain_type, center):
+    terrain = _terrain_key(terrain_type)
+    base = TERRAIN_DEFS[terrain]["color"]
+    key = f"{int(center[0])},{int(center[1])}:{terrain}"
+    fill = _shade_color(base, _terrain_variation(key))
+    border = _terrain_border(fill)
+
+    draw.polygon(hex_points, fill=(*fill, 255))
+
+    cx, cy = center
+    top = [
+        hex_points[2],
+        hex_points[3],
+        (cx, cy),
+        hex_points[4],
+    ]
+    bottom = [
+        hex_points[5],
+        hex_points[0],
+        (cx, cy),
+        hex_points[1],
+    ]
+    draw.polygon(top, fill=(255, 255, 255, 22))
+    draw.polygon(bottom, fill=(0, 0, 0, 24))
+
+    if terrain == "water":
+        for idx in (1, 3, 5):
+            x = cx + (idx - 3) * 2
+            draw.point((x, cy + idx), fill=(255, 255, 255, 45))
+
+    draw_terrain_icon(draw, center, terrain, HEX_SIZE)
+    draw.polygon(hex_points, outline=(*border, 255), width=1)
+
+
+def draw_coastline(draw, hex_points, neighbors, terrain_type):
+    if _terrain_key(terrain_type) == "water":
+        return
+    for idx, neighbor_terrain in enumerate(neighbors):
+        if _terrain_key(neighbor_terrain) != "water":
+            continue
+        p1, p2 = _edge_points(hex_points, idx)
+        draw.line((p1[0], p1[1], p2[0], p2[1]), fill=COASTLINE_DARK, width=5)
+        draw.line((p1[0], p1[1], p2[0], p2[1]), fill=COASTLINE, width=3)
 
 # ── Layout ─────────────────────────────────────────────────────────────────────
 
@@ -291,21 +462,18 @@ def render_planet_map(
     f_pip    = _font(_SANS,     7)
     f_legend = _font(_SANSREG, 11)
 
-    # ── Draw all hexes (terrain + status tint + labels) ───────────────────────
+    # Draw all hexes: terrain, status tint, coastline, then coordinates.
     for gq, gr in GRID_COORDS:
         key     = hex_key(gq, gr)
         cx, cy  = hex_center(gq, gr, HEX_SIZE, ox, oy)
         info    = hex_data.get(key, {})
-        terrain = info.get("terrain", "flat")
+        terrain = _terrain_key(info.get("terrain", "plains"))
         status  = info.get("status",  "neutral")
-        t_def   = TERRAIN_DEFS.get(terrain, TERRAIN_DEFS["flat"])
-        g       = t_def["fill"]
-        b       = t_def["border"]
         corners = hex_corners(cx, cy, HEX_SIZE - 0.8)
         occupied = _has_unit_markers(unit_data, key)
         label_pos = _hex_label_positions(cx, cy, occupied)
 
-        draw.polygon(corners, fill=(g, g, g, 255))
+        draw_terrain_hex(draw, corners, terrain, (cx, cy))
 
         tint = STATUS_TINTS.get(status, (0,0,0,0))
         if tint[3] > 0:
@@ -314,24 +482,12 @@ def render_planet_map(
             img  = Image.alpha_composite(img, tl)
             draw = ImageDraw.Draw(img)
 
-        draw.polygon(corners, outline=(b, b, b, 255), width=1)
+        neighbor_terrains = []
+        for nq, nr in get_neighbors(gq, gr):
+            nkey = hex_key(nq, nr)
+            neighbor_terrains.append(hex_data.get(nkey, {}).get("terrain", "plains"))
+        draw_coastline(draw, corners, neighbor_terrains, terrain)
 
-        # Terrain abbr — top center (always black with white outline for visibility)
-        abbr = t_def.get("abbr", "")
-        if abbr:
-            try:
-                bb   = draw.textbbox((0,0), abbr, font=f_abbr)
-                aw   = (bb[2]-bb[0])/2
-                ax   = label_pos["terrain_x"] if label_pos["cornered"] else cx - aw
-                ay   = label_pos["terrain_y"]
-                # White shadow/outline for contrast on all terrain
-                for ox2, oy2 in [(-1,-1),(1,-1),(-1,1),(1,1),(0,-1),(0,1),(-1,0),(1,0)]:
-                    draw.text((ax+ox2, ay+oy2), abbr, font=f_abbr, fill=(255,255,255,200))
-                draw.text((ax, ay), abbr, font=f_abbr, fill=(0,0,0,255))
-            except Exception:
-                pass
-
-        # Global coord label — centered (always black with white outline)
         lbl = key
         try:
             bb  = draw.textbbox((0,0), lbl, font=f_coord)
@@ -340,10 +496,11 @@ def render_planet_map(
             lx2 = label_pos["coord_x"] if label_pos["cornered"] else cx - lw
             label_cy = label_pos["coord_y"]
             ly2 = label_cy - lh
-            # White shadow for contrast on dark tiles
+            shadow = (255,255,255,185) if terrain not in ("plains", "city") else (0,0,0,90)
+            fill = (20, 20, 20, 255) if terrain in ("plains", "city") else (235, 240, 235, 255)
             for ox2, oy2 in [(-1,-1),(1,-1),(-1,1),(1,1),(0,-1),(0,1),(-1,0),(1,0)]:
-                draw.text((lx2+ox2, ly2+oy2), lbl, font=f_coord, fill=(255,255,255,200))
-            draw.text((lx2, ly2), lbl, font=f_coord, fill=(0,0,0,255))
+                draw.text((lx2+ox2, ly2+oy2), lbl, font=f_coord, fill=shadow)
+            draw.text((lx2, ly2), lbl, font=f_coord, fill=fill)
         except Exception:
             pass
 
@@ -381,7 +538,7 @@ def render_planet_map(
     draw.rectangle((0,ly,img_w,img_h), fill=(10,10,10,255))
     draw.line((28,ly+1,img_w-28,ly+1), fill=(75,75,75,255), width=1)
 
-    t_items = [(TERRAIN_DEFS[t]["fill"], TERRAIN_DEFS[t]["label"]) for t in TERRAIN_TYPES]
+    t_items = [(TERRAIN_DEFS[t]["color"], TERRAIN_DEFS[t]["label"], t) for t in TERRAIN_TYPES]
     s_items = [
         (72, 90,205, f"{theme.get('player_faction','PMC')} ctrl"),
         (205,52, 52, f"{theme.get('enemy_faction','Enemy')} ctrl"),
@@ -392,9 +549,10 @@ def render_planet_map(
     cw_t = (img_w-56) // len(t_items)
     cw_s = (img_w-56) // len(s_items)
 
-    for i,(g,lbl) in enumerate(t_items):
+    for i,(color,lbl,tkey) in enumerate(t_items):
         x = lx+i*cw_t
-        draw.rectangle((x,ly+10,x+14,ly+24), fill=(g,g,g,255), outline=(105,105,105,255))
+        draw.rectangle((x,ly+10,x+14,ly+24), fill=(*color,255), outline=(*_terrain_border(color),255))
+        draw_terrain_icon(draw, (x+7, ly+17), tkey, 20)
         try: draw.text((x+18,ly+10), lbl, font=f_legend, fill=(162,162,162,255))
         except Exception: pass
 
@@ -737,16 +895,13 @@ def render_movement_map(
         key     = hex_key(gq, gr)
         cx, cy  = hex_center(gq, gr, HEX_SIZE, ox, oy)
         info    = hex_data.get(key, {})
-        terrain = info.get("terrain", "flat")
+        terrain = _terrain_key(info.get("terrain", "plains"))
         status  = info.get("status",  "neutral")
-        t_def   = TERRAIN_DEFS.get(terrain, TERRAIN_DEFS["flat"])
-        g       = t_def["fill"]
-        b       = t_def["border"]
         corners = hex_corners(cx, cy, HEX_SIZE - 0.8)
         occupied = _has_unit_markers(unit_data, key)
         label_pos = _hex_label_positions(cx, cy, occupied)
 
-        draw.polygon(corners, fill=(g, g, g, 255))
+        draw_terrain_hex(draw, corners, terrain, (cx, cy))
 
         tint = STATUS_TINTS.get(status, (0,0,0,0))
         if tint[3] > 0:
@@ -755,20 +910,11 @@ def render_movement_map(
             img  = Image.alpha_composite(img, tl)
             draw = ImageDraw.Draw(img)
 
-        draw.polygon(corners, outline=(b, b, b, 255), width=1)
-
-        abbr = t_def.get("abbr", "")
-        if abbr:
-            try:
-                bb  = draw.textbbox((0,0), abbr, font=f_abbr)
-                aw  = (bb[2]-bb[0])/2
-                ax = label_pos["terrain_x"] if label_pos["cornered"] else cx - aw
-                ay = label_pos["terrain_y"]
-                for dx2, dy2 in [(-1,-1),(1,-1),(-1,1),(1,1),(0,-1),(0,1),(-1,0),(1,0)]:
-                    draw.text((ax+dx2, ay+dy2), abbr, font=f_abbr, fill=(255,255,255,200))
-                draw.text((ax, ay), abbr, font=f_abbr, fill=(0,0,0,255))
-            except Exception:
-                pass
+        neighbor_terrains = []
+        for nq, nr in get_neighbors(gq, gr):
+            nkey = hex_key(nq, nr)
+            neighbor_terrains.append(hex_data.get(nkey, {}).get("terrain", "plains"))
+        draw_coastline(draw, corners, neighbor_terrains, terrain)
 
         lbl = key
         try:
@@ -778,9 +924,11 @@ def render_movement_map(
             label_cy = label_pos["coord_y"]
             lx2 = label_pos["coord_x"] if label_pos["cornered"] else cx - lw2
             ly2 = label_cy-lh2
+            shadow = (255,255,255,185) if terrain not in ("plains", "city") else (0,0,0,90)
+            fill = (20, 20, 20, 255) if terrain in ("plains", "city") else (235, 240, 235, 255)
             for dx2, dy2 in [(-1,-1),(1,-1),(-1,1),(1,1),(0,-1),(0,1),(-1,0),(1,0)]:
-                draw.text((lx2+dx2, ly2+dy2), lbl, font=f_coord, fill=(255,255,255,200))
-            draw.text((lx2, ly2), lbl, font=f_coord, fill=(0,0,0,255))
+                draw.text((lx2+dx2, ly2+dy2), lbl, font=f_coord, fill=shadow)
+            draw.text((lx2, ly2), lbl, font=f_coord, fill=fill)
         except Exception:
             pass
 
