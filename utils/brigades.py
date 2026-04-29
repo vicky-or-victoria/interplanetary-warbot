@@ -27,7 +27,7 @@ BRIGADES = {
         "specials": [
             "Transit in 1 turn (direct orbital insertion)",
             "Moves 2 hexes per action",
-            "/recon_sweep — reveals enemy units within 2 hexes",
+            "Recon Sweep button — reveals enemy units within 2 hexes",
         ],
     },
     "armoured": {
@@ -71,7 +71,7 @@ BRIGADES = {
         "scavenge_bonus": 0,
         "supply_drain":   1,
         "specials": [
-            "/dig_in — +4 defense roll bonus until next move",
+            "Dig In button — +4 defense roll bonus until next move",
             "Highest base morale of all brigades",
         ],
     },
@@ -95,7 +95,7 @@ BRIGADES = {
         "specials": [
             "Can scavenge twice per turn",
             "+3 supply bonus per scavenge action",
-            "/recon_sweep — reveals enemy units within 3 hexes",
+            "Recon Sweep button — reveals enemy units within 3 hexes",
         ],
     },
     "artillery": {
@@ -116,7 +116,7 @@ BRIGADES = {
         "scavenge_bonus": 0,
         "supply_drain":   1,
         "specials": [
-            "Must use /artillery_hold to arm before firing in combat",
+            "Artillery Hold button — arms before firing in combat",
             "Armed artillery deals splash damage to adjacent enemy hexes",
             "Moving disarms the unit",
             "Transit takes 3 turns",
@@ -140,8 +140,8 @@ BRIGADES = {
         "scavenge_bonus": 0,
         "supply_drain":   0,    # self-sufficient, no supply drain
         "specials": [
-            "/fortify — permanently changes current hex terrain to Fort",
-            "/repair — restores supply to all friendly units on adjacent hexes",
+            "Fortify button — permanently changes current hex terrain to Fort",
+            "Repair Adjacent button — restores supply to all friendly units on adjacent hexes",
             "No supply drain (self-sufficient logistics)",
         ],
     },
@@ -165,7 +165,7 @@ BRIGADES = {
         "specials": [
             "Can deploy to ANY hex on the map instantly (direct insertion)",
             "3d10 drop-lowest combat rolls — higher variance, higher ceiling",
-            "/recon_sweep — reveals enemy units within 2 hexes",
+            "Recon Sweep button — reveals enemy units within 2 hexes",
             "Transit in 1 turn, any destination",
         ],
     },

@@ -8,6 +8,7 @@ import discord
 from discord.ui import View, Button
 
 from utils.db import get_pool, get_theme, get_active_planet_id
+from utils.brigades import BRIGADES
 
 
 def _bar(val: int, length: int = 12) -> str:
@@ -441,8 +442,49 @@ async def update_menu_embed(bot, guild_id: int, conn):
 # ENLISTMENT BOARD
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _brigade_stats_line(stats: dict) -> str:
+    return (
+        f"ATK {stats['attack']:>2} | DEF {stats['defense']:>2} | "
+        f"SPD {stats['speed']:>2} | MRL {stats['morale']:>2} | "
+        f"SUP {stats['supply']:>2} | RCN {stats['recon']:>2}"
+    )
+
+
+def _brigade_brief_lines() -> list[str]:
+    lines = []
+    for data in BRIGADES.values():
+        stats = _brigade_stats_line(data["stats"])
+        specials = data.get("specials", [])
+        hook = specials[0] if specials else "Standard line deployment."
+        lines.append(f"**{data['name']}** - `{stats}`\n{hook}")
+    return lines
+
+
+def _build_brigade_dossier_embed(theme: dict) -> discord.Embed:
+    embed = discord.Embed(
+        title=f"{theme.get('bot_name', 'WARBOT')} - Brigade Dossier",
+        color=theme.get("color", 0xAA2222),
+        description=(
+            "These entries are generated from the live brigade registry, so the "
+            "enlistment board and Brigade Info stay in sync."
+        ),
+    )
+    for data in BRIGADES.values():
+        stats = _brigade_stats_line(data["stats"])
+        specials = "\n".join(f"- {text}" for text in data.get("specials", []))
+        if not specials:
+            specials = "- Standard line unit"
+        embed.add_field(
+            name=f"{data['emoji']} {data['name']}",
+            value=f"{data['description']}\n```{stats}```{specials}",
+            inline=False)
+    embed.set_footer(text="Use Enlist Now for new units. Use Deploy for returning rostered units.")
+    return embed
+
+
 def build_enlist_embed(theme: dict, planet_name: str, contractor: str,
-                       enemy_type: str, operative_count: int) -> discord.Embed:
+                       enemy_type: str, operative_count: int, contract_name: str = None,
+                       contract_status: str = None) -> discord.Embed:
     """Build the persistent enlistment board embed."""
     bot_name = theme.get("bot_name", "WARBOT")
     color    = theme.get("color", 0xAA2222)
@@ -453,6 +495,8 @@ def build_enlist_embed(theme: dict, planet_name: str, contractor: str,
         f"  Planet:      {planet_name}\n"
         f"  Contractor:  {contractor}\n"
         f"  Enemy:       {enemy_type}\n"
+        f"  Contract:    {contract_name or 'Unassigned'}\n"
+        f"  Status:      {contract_status or 'Standby'}\n"
         f"  Commandants: {operative_count} enlisted\n"
         f"```\n"
         f"Choose your brigade and deploy. Use `/player_panel` to open your command file.\n\n"
@@ -509,7 +553,6 @@ class EnlistView(View):
                        custom_id="enlist_board_brigades")
     async def brigade_info(self, i: discord.Interaction, b: Button):
         try:
-            from utils.brigades import BRIGADES
             theme = {"color": 0xAA2222, "bot_name": "WARBOT"}
             try:
                 pool = await get_pool()
@@ -517,36 +560,18 @@ class EnlistView(View):
                     theme = await get_theme(conn, i.guild_id)
             except Exception:
                 pass
-            embed = discord.Embed(
-                title=f"{theme.get('bot_name', 'WARBOT')} - Brigade Dossier",
-                color=theme.get("color", 0xAA2222),
-                description=(
-                    "Choose a brigade only when creating a new unit. Returning commandants "
-                    "use **Deploy** to bring their existing unit back into the theatre."
-                ),
-            )
-            for key, b_data in BRIGADES.items():
-                s = b_data["stats"]
-                stats = (
-                    f"```ATK {s['attack']:>2} | DEF {s['defense']:>2} | SPD {s['speed']:>2}\n"
-                    f"MRL {s['morale']:>2} | SUP {s['supply']:>2} | RCN {s['recon']:>2}```"
-                )
-                specials = "\n".join(f"- {text}" for text in b_data.get("specials", [])) or "- Standard line unit"
-                embed.add_field(
-                    name=f"{b_data['emoji']} {b_data['name']}",
-                    value=f"{b_data['description']}\n{stats}{specials}",
-                    inline=False)
-            embed.set_footer(text="Stats mirror the unit deployment dossier.")
+            embed = _build_brigade_dossier_embed(theme)
             await i.response.send_message(embed=embed, ephemeral=True)
         except Exception as e:
             await i.response.send_message(f"Error loading brigades: {e}", ephemeral=True)
 
 
 async def refresh_enlist_counter(bot, guild_id: int, conn):
-    """Update the operative count on the persistent enlistment board."""
+    """Update the persistent enlistment board with current theatre and roster data."""
     try:
         cfg = await conn.fetchrow(
-            "SELECT enlist_channel_id, enlist_message_id, active_planet_id "
+            "SELECT enlist_channel_id, enlist_message_id, active_planet_id, "
+            "contract_name, game_started "
             "FROM guild_config WHERE guild_id=$1", guild_id)
         if not cfg or not cfg["enlist_channel_id"] or not cfg["enlist_message_id"]:
             return
@@ -554,7 +579,7 @@ async def refresh_enlist_counter(bot, guild_id: int, conn):
         if not channel:
             return
         msg = await channel.fetch_message(cfg["enlist_message_id"])
-        planet_id = cfg["active_planet_id"] or 1
+        planet_id = cfg["active_planet_id"] or await get_active_planet_id(conn, guild_id)
         planet = await conn.fetchrow(
             "SELECT name, contractor, enemy_type FROM planets WHERE guild_id=$1 AND id=$2",
             guild_id, planet_id)
@@ -569,8 +594,16 @@ async def refresh_enlist_counter(bot, guild_id: int, conn):
             planet["contractor"] if planet else "---",
             planet["enemy_type"] if planet else "---",
             count,
+            cfg["contract_name"] if cfg and cfg["contract_name"] else "Unassigned",
+            "Active" if cfg and cfg["game_started"] else "Standby",
         )
         await msg.edit(embed=embed, view=EnlistView(guild_id))
     except Exception as e:
         import logging
         logging.getLogger(__name__).warning(f"Enlist counter refresh failed: {e}")
+
+
+async def refresh_public_panels(bot, guild_id: int, conn):
+    """Refresh persistent public embeds that describe the current theatre."""
+    await update_menu_embed(bot, guild_id, conn)
+    await refresh_enlist_counter(bot, guild_id, conn)
