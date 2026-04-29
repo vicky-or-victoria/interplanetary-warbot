@@ -507,10 +507,6 @@ def build_enlist_embed(theme: dict, planet_name: str, contractor: str,
         description=desc,
         color=color,
     )
-    embed.add_field(
-        name="Available Brigade Files",
-        value="\n\n".join(_brigade_brief_lines())[:1024],
-        inline=False)
     embed.set_footer(text="Enlist creates a command file. Deploy returns a commandant to the new contract.")
     return embed
 
