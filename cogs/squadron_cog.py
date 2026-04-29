@@ -950,12 +950,20 @@ class PlayerPanelView(discord.ui.View):
     @discord.ui.button(label="Enlist", style=discord.ButtonStyle.success, row=0)
     async def enlist(self, i: discord.Interaction, b: discord.ui.Button):
         from views.menu import _UnitNameModal
-        await i.response.send_modal(_UnitNameModal(i.guild_id, returning=False))
+        try:
+            modal = _UnitNameModal(i.guild_id, returning=False)
+        except TypeError:
+            modal = _UnitNameModal(i.guild_id)
+        await i.response.send_modal(modal)
 
     @discord.ui.button(label="Deploy", style=discord.ButtonStyle.primary, row=0)
     async def deploy(self, i: discord.Interaction, b: discord.ui.Button):
         from views.menu import _UnitNameModal
-        await i.response.send_modal(_UnitNameModal(i.guild_id, returning=True))
+        try:
+            modal = _UnitNameModal(i.guild_id, returning=True)
+        except TypeError:
+            modal = _UnitNameModal(i.guild_id)
+        await i.response.send_modal(modal)
 
     @discord.ui.button(label="My Unit", style=discord.ButtonStyle.secondary, row=1)
     async def my_unit(self, i: discord.Interaction, b: discord.ui.Button):
