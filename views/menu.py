@@ -51,7 +51,7 @@ class MainMenuView(View):
 
     @discord.ui.button(label="📊 Contract Status", style=discord.ButtonStyle.secondary, custom_id="menu_status",     row=1)
     async def war_status(self, i: discord.Interaction, b: Button):
-        await _safe(i, _send_war_status(i))
+        await _safe(i, _send_contract_board(i))
 
     @discord.ui.button(label="📜 Combat Log",    style=discord.ButtonStyle.secondary, custom_id="menu_log",        row=1)
     async def combat_log(self, i: discord.Interaction, b: Button):
@@ -208,6 +208,61 @@ async def _do_scavenge(i: discord.Interaction, guild_id: int):
         f"🔍 Scavenged **+{gain}** supply → `{new_supply}/20`.", ephemeral=True)
 
 
+
+
+async def _active_contract(conn, guild_id:int):
+    return await conn.fetchrow("SELECT * FROM contracts WHERE guild_id=$1 AND status IN ('open','accepting','locked','deployable','active') ORDER BY id DESC LIMIT 1", guild_id)
+
+
+class ContractBoardView(View):
+    def __init__(self, guild_id:int):
+        super().__init__(timeout=180)
+        self.guild_id=guild_id
+
+    @discord.ui.button(label="View", style=discord.ButtonStyle.secondary, row=0)
+    async def view_contract(self,i,b):
+        await _send_contract_board(i)
+
+    @discord.ui.button(label="Accept", style=discord.ButtonStyle.success, row=0)
+    async def accept_contract(self,i,b):
+        pool=await get_pool()
+        async with pool.acquire() as conn:
+            c=await _active_contract(conn,i.guild_id)
+            if not c:
+                await i.response.send_message("No contract available.",ephemeral=True); return
+            await conn.execute("INSERT INTO contract_acceptances (guild_id, contract_id, player_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING", i.guild_id, c['id'], i.user.id)
+        await i.response.send_message("Accepted current contract.",ephemeral=True)
+
+    @discord.ui.button(label="Withdraw", style=discord.ButtonStyle.danger, row=0)
+    async def withdraw_contract(self,i,b):
+        pool=await get_pool()
+        async with pool.acquire() as conn:
+            c=await _active_contract(conn,i.guild_id)
+            if not c:
+                await i.response.send_message("No contract available.",ephemeral=True); return
+            await conn.execute("DELETE FROM contract_acceptances WHERE guild_id=$1 AND contract_id=$2 AND player_id=$3", i.guild_id, c['id'], i.user.id)
+        await i.response.send_message("Withdrawn from current contract.",ephemeral=True)
+
+    @discord.ui.button(label="Deploy", style=discord.ButtonStyle.primary, row=0)
+    async def deploy_contract(self,i,b):
+        from cogs.squadron_cog import open_returning_deploy
+        await open_returning_deploy(i)
+
+
+async def _send_contract_board(i: discord.Interaction):
+    pool=await get_pool()
+    async with pool.acquire() as conn:
+        theme=await get_theme(conn,i.guild_id)
+        rows=await conn.fetch("SELECT * FROM contracts WHERE guild_id=$1 ORDER BY id DESC LIMIT 10", i.guild_id)
+    if not rows:
+        await i.response.send_message("No contracts on the board yet.",ephemeral=True); return
+    lines=[]
+    for c in rows:
+        lines.append(f"**CONTRACT #{c['id']:03d} — {c['title']}**\nFleets: {c['fleet_count']}\nCapacity: {c['deployment_capacity']} units\nStatus: {c['status']}\n")
+    embed=discord.Embed(title="Contract Board", color=theme.get('color',0xAA2222), description="\n".join(lines)[:3900])
+    await i.response.send_message(embed=embed, view=ContractBoardView(i.guild_id), ephemeral=True)
+
+
 # ── War status ────────────────────────────────────────────────────────────────
 
 async def _send_war_status(i: discord.Interaction):
@@ -219,7 +274,7 @@ async def _send_war_status(i: discord.Interaction):
             "SELECT name, contractor, enemy_type FROM planets WHERE guild_id=$1 AND id=$2",
             i.guild_id, planet_id)
         cfg       = await conn.fetchrow(
-            "SELECT game_started, turn_interval_hours, contract_name FROM guild_config WHERE guild_id=$1",
+            "SELECT game_started, turn_interval_hours, contract_name, operational_tempo, tempo_threshold, fleet_pool_available FROM guild_config WHERE guild_id=$1",
             i.guild_id)
         p_count   = await conn.fetchval(
             "SELECT COUNT(DISTINCT owner_id) FROM squadrons "
@@ -246,7 +301,7 @@ async def _send_war_status(i: discord.Interaction):
             f"· Turn **{turns}** · Every **{cfg['turn_interval_hours'] if cfg else '?'}h**\n"
             f"**Planet:** {planet['name'] if planet else '—'} "
             f"· Contractor: {planet['contractor'] if planet else '—'}\n"
-            f"**Enemy:** {planet['enemy_type'] if planet else '—'}\n\n"
+            f"**Enemy:** {planet['enemy_type'] if planet else '—'}\n**Fleets Available:** {cfg['fleet_pool_available'] if cfg else 0}\n**Operational Tempo:** {cfg['operational_tempo'] if cfg else 0}/{cfg['tempo_threshold'] if cfg else 500}\n\n"
             f"**{theme.get('player_faction','PMC')}:** {p_count} units\n"
             f"**{theme.get('enemy_faction','Enemy')}:** {e_count} units\n\n"
             f"**Sector Control:**\n" +
@@ -318,7 +373,7 @@ async def build_menu_embed(guild_id: int, conn, theme: dict = None) -> discord.E
         "SELECT name, contractor, enemy_type FROM planets WHERE guild_id=$1 AND id=$2",
         guild_id, planet_id)
     cfg        = await conn.fetchrow(
-        "SELECT game_started, turn_interval_hours, contract_name FROM guild_config WHERE guild_id=$1",
+        "SELECT game_started, turn_interval_hours, contract_name, operational_tempo, tempo_threshold, fleet_pool_available FROM guild_config WHERE guild_id=$1",
         guild_id)
     turn_count = await conn.fetchval(
         "SELECT COUNT(*) FROM turn_history WHERE guild_id=$1 AND planet_id=$2",
@@ -350,7 +405,7 @@ async def build_menu_embed(guild_id: int, conn, theme: dict = None) -> discord.E
         f"  Planet:      {planet['name'] if planet else '—'}\n"
         f"  Contractor:  {planet['contractor'] if planet else '—'}\n"
         f"  Enemy:       {planet['enemy_type'] if planet else '—'}\n"
-        f"  Status:      {state}  ·  Turn {turn_count}\n"
+        f"  Status:      {state}  ·  Turn {turn_count}\n  Fleets:      {cfg['fleet_pool_available'] if cfg else 0} available\n  Operational Tempo: {cfg['operational_tempo'] if cfg else 0}/{cfg['tempo_threshold'] if cfg else 500}\n"
         f"```"
         f"\n**FRONT LINE REPORT**\n\n"
         f"  🔵  {theme.get('player_faction','PMC')}: **{p_count}** units · "
