@@ -15,7 +15,7 @@ from discord.ext import commands
 
 from utils.db import get_pool, ensure_guild, get_theme, get_active_planet_id
 from utils.hexmap import ensure_hexes, is_valid, GRID_COORDS, hex_key
-from utils.map_render import TERRAIN_TYPES, generate_water_bodies
+from utils.map_render import TERRAIN_TYPES, generate_biome_terrain_map
 from utils.brigades import BRIGADES
 from utils.profiles import cosmetic_key, ensure_commander_profile, grant_default_banner
 
@@ -261,22 +261,8 @@ class AdminPanelView(discord.ui.View):
         async with pool.acquire() as conn:
             planet_id = await get_active_planet_id(conn, i.guild_id)
             from utils.hexmap import GRID_COORDS, hex_key
-            import random
-            # Weighted land distribution plus clustered water bodies.
-            weights = {
-                "plains":   45,
-                "forest":   20,
-                "hills":    15,
-                "mountain":  8,
-                "city":      5,
-                "military":  4,
-                "fort":      3,
-            }
-            terrain_pool = [t for t, w in weights.items() for _ in range(w)]
-            water_hexes = generate_water_bodies(
+            terrain_map = generate_biome_terrain_map(
                 GRID_COORDS,
-                water_ratio=0.08,
-                body_count=3,
                 seed=i.guild_id * 1009 + planet_id,
             )
             await conn.execute(
@@ -284,14 +270,14 @@ class AdminPanelView(discord.ui.View):
                 i.guild_id, planet_id)
             for gq, gr in GRID_COORDS:
                 addr    = hex_key(gq, gr)
-                terrain = "water" if (gq, gr) in water_hexes else random.choice(terrain_pool)
+                terrain = terrain_map.get((gq, gr), "plains")
                 if terrain != "plains":   # skip inserting plains — it's the default
                     await conn.execute("""
                         INSERT INTO hex_terrain (guild_id, planet_id, address, terrain)
                         VALUES ($1,$2,$3,$4)
                         ON CONFLICT (guild_id, planet_id, address) DO UPDATE SET terrain=EXCLUDED.terrain
                     """, i.guild_id, planet_id, addr, terrain)
-        await i.followup.send("🎲 Terrain randomised!", ephemeral=True)
+        await i.followup.send("Terrain generated with clustered tactical biomes.", ephemeral=True)
 
     @discord.ui.button(label="🔃 Reset Terrain", style=discord.ButtonStyle.danger, row=0)
     async def map_reset_terrain(self, i: discord.Interaction, b: discord.ui.Button):
