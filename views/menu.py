@@ -393,26 +393,26 @@ def build_enlist_embed(theme: dict, planet_name: str, contractor: str,
     color    = theme.get("color", 0xAA2222)
     desc = (
         f"```\n"
-        f"  {bot_name}  ·  RECRUITMENT CENTRE\n"
-        f"  {'═' * 40}\n"
+        f"  {bot_name}  -  RECRUITMENT CENTRE\n"
+        f"  {'=' * 40}\n"
         f"  Planet:      {planet_name}\n"
         f"  Contractor:  {contractor}\n"
         f"  Enemy:       {enemy_type}\n"
-        f"  Operatives:  {operative_count} enlisted\n"
+        f"  Commandants: {operative_count} enlisted\n"
         f"```\n"
-        f"Choose your brigade and deploy. Use `/enlist` to join the war.\n\n"
+        f"Choose your brigade and deploy. Use `/player_panel` to open your command file.\n\n"
         f"*{theme.get('flavor_text', 'The contract must be fulfilled.')}*"
     )
     embed = discord.Embed(
-        title=f"⚔ {bot_name} — Enlistment Board",
+        title=f"{bot_name} - Enlistment Board",
         description=desc,
         color=color,
     )
-    embed.set_footer(text="Use /enlist to pick your brigade and deploy.")
+    embed.set_footer(text="Enlist creates a command file. Deploy returns a commandant to the new contract.")
     return embed
 
 
-class _UnitNameModal(discord.ui.Modal, title="Enlist Your Unit"):
+class _UnitNameModal(discord.ui.Modal, title="Name Your Unit"):
     unit_name = discord.ui.TextInput(
         label="Unit Name",
         placeholder="e.g. Iron Wolves",
@@ -420,14 +420,15 @@ class _UnitNameModal(discord.ui.Modal, title="Enlist Your Unit"):
         required=True,
     )
 
-    def __init__(self, guild_id: int):
+    def __init__(self, guild_id: int, returning: bool = False):
         super().__init__()
         self.guild_id = guild_id
+        self.returning = returning
 
     async def on_submit(self, i: discord.Interaction):
         from cogs.squadron_cog import BrigadePickerView, brigade_picker_embed
         name = str(self.unit_name).strip()
-        embed = brigade_picker_embed(name)
+        embed = brigade_picker_embed(name, returning=self.returning)
         await i.response.send_message(embed=embed, view=BrigadePickerView(i.guild_id, name), ephemeral=True)
 
 
@@ -438,11 +439,15 @@ class EnlistView(View):
         super().__init__(timeout=None)
         self.guild_id = guild_id
 
-    @discord.ui.button(label="⚔ Enlist Now", style=discord.ButtonStyle.success,
+    @discord.ui.button(label="Enlist", style=discord.ButtonStyle.success,
                        custom_id="enlist_board_enlist")
     async def enlist_now(self, i: discord.Interaction, b: Button):
-        await i.response.send_modal(_UnitNameModal(i.guild_id))
+        await i.response.send_modal(_UnitNameModal(i.guild_id, False))
 
+    @discord.ui.button(label="Deploy", style=discord.ButtonStyle.primary,
+                       custom_id="enlist_board_deploy")
+    async def deploy_now(self, i: discord.Interaction, b: Button):
+        await i.response.send_modal(_UnitNameModal(i.guild_id, True))
     @discord.ui.button(label="📖 Brigade Info", style=discord.ButtonStyle.secondary,
                        custom_id="enlist_board_brigades")
     async def brigade_info(self, i: discord.Interaction, b: Button):
