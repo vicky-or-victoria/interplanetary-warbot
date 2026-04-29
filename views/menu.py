@@ -439,7 +439,7 @@ class EnlistView(View):
         super().__init__(timeout=None)
         self.guild_id = guild_id
 
-    @discord.ui.button(label="Enlist", style=discord.ButtonStyle.success,
+    @discord.ui.button(label="Enlist Now", style=discord.ButtonStyle.success,
                        custom_id="enlist_board_enlist")
     async def enlist_now(self, i: discord.Interaction, b: Button):
         await i.response.send_modal(_UnitNameModal(i.guild_id, False))
@@ -447,26 +447,44 @@ class EnlistView(View):
     @discord.ui.button(label="Deploy", style=discord.ButtonStyle.primary,
                        custom_id="enlist_board_deploy")
     async def deploy_now(self, i: discord.Interaction, b: Button):
-        await i.response.send_modal(_UnitNameModal(i.guild_id, True))
-    @discord.ui.button(label="📖 Brigade Info", style=discord.ButtonStyle.secondary,
+        from cogs.squadron_cog import open_returning_deploy
+        await open_returning_deploy(i)
+
+    @discord.ui.button(label="Brigade Info", style=discord.ButtonStyle.secondary,
                        custom_id="enlist_board_brigades")
     async def brigade_info(self, i: discord.Interaction, b: Button):
         try:
             from utils.brigades import BRIGADES
-            lines = []
-            for key, b_data in BRIGADES.items():
-                specials = "  · ".join(b_data.get("specials", []))
-                lines.append(
-                    f"**{b_data['emoji']} {b_data['name']}** — {b_data['description']}\n"
-                    f"  {specials}"
-                )
+            theme = {"color": 0xAA2222, "bot_name": "WARBOT"}
+            try:
+                pool = await get_pool()
+                async with pool.acquire() as conn:
+                    theme = await get_theme(conn, i.guild_id)
+            except Exception:
+                pass
             embed = discord.Embed(
-                title="Brigade Roster",
-                description="\n\n".join(lines),
-                color=0xAA2222)
+                title=f"{theme.get('bot_name', 'WARBOT')} - Brigade Dossier",
+                color=theme.get("color", 0xAA2222),
+                description=(
+                    "Choose a brigade only when creating a new unit. Returning commandants "
+                    "use **Deploy** to bring their existing unit back into the theatre."
+                ),
+            )
+            for key, b_data in BRIGADES.items():
+                s = b_data["stats"]
+                stats = (
+                    f"```ATK {s['attack']:>2} | DEF {s['defense']:>2} | SPD {s['speed']:>2}\n"
+                    f"MRL {s['morale']:>2} | SUP {s['supply']:>2} | RCN {s['recon']:>2}```"
+                )
+                specials = "\n".join(f"- {text}" for text in b_data.get("specials", [])) or "- Standard line unit"
+                embed.add_field(
+                    name=f"{b_data['emoji']} {b_data['name']}",
+                    value=f"{b_data['description']}\n{stats}{specials}",
+                    inline=False)
+            embed.set_footer(text="Stats mirror the unit deployment dossier.")
             await i.response.send_message(embed=embed, ephemeral=True)
         except Exception as e:
-            await i.response.send_message(f"❌ Error loading brigades: {e}", ephemeral=True)
+            await i.response.send_message(f"Error loading brigades: {e}", ephemeral=True)
 
 
 async def refresh_enlist_counter(bot, guild_id: int, conn):
@@ -487,8 +505,8 @@ async def refresh_enlist_counter(bot, guild_id: int, conn):
             guild_id, planet_id)
         count = await conn.fetchval(
             "SELECT COUNT(DISTINCT owner_id) FROM squadrons "
-            "WHERE guild_id=$1 AND planet_id=$2 AND is_active=TRUE",
-            guild_id, planet_id) or 0
+            "WHERE guild_id=$1",
+            guild_id) or 0
         theme = await get_theme(conn, guild_id)
         embed = build_enlist_embed(
             theme,
