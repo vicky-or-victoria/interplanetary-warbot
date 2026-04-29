@@ -524,6 +524,17 @@ class DeployModal(discord.ui.Modal, title="Deploy Your Unit"):
                 await interaction.followup.send(
                     "You already have an active unit.", ephemeral=True); return
 
+            rostered = await conn.fetchrow(
+                "SELECT id, name FROM squadrons "
+                "WHERE guild_id=$1 AND owner_id=$2 "
+                "ORDER BY id DESC LIMIT 1",
+                self.guild_id, interaction.user.id)
+            if rostered:
+                await interaction.followup.send(
+                    f"Your command file already contains **{rostered['name']}**. "
+                    "Use **Deploy** on the enlistment board to return that unit to the map.",
+                    ephemeral=True); return
+
             # Total loss removes this command from the map until a new contract starts.
             dead = await conn.fetchrow(
                 "SELECT id FROM squadrons "
@@ -608,6 +619,205 @@ class DeployModal(discord.ui.Modal, title="Deploy Your Unit"):
 # ══════════════════════════════════════════════════════════════════════════════
 # MOVE PAD
 # ══════════════════════════════════════════════════════════════════════════════
+
+class ExistingDeployModal(discord.ui.Modal, title="Deploy Existing Unit"):
+    destination = discord.ui.TextInput(
+        label="Deployment Hex (global coord)",
+        placeholder="e.g. 3,-2 or 0,0",
+        max_length=12,
+        required=True,
+    )
+
+    def __init__(self, guild_id: int, squadron_id: int):
+        super().__init__()
+        self.guild_id = guild_id
+        self.squadron_id = squadron_id
+
+    async def on_submit(self, interaction: discord.Interaction):
+        dest = str(self.destination).strip()
+        if not is_valid(dest):
+            await interaction.response.send_message(
+                f"Invalid hex `{dest}`. Use format `gq,gr` e.g. `3,-2`.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        await ensure_guild(self.guild_id)
+
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            theme = await get_theme(conn, self.guild_id)
+            planet_id = await get_active_planet_id(conn, self.guild_id)
+            cfg = await conn.fetchrow(
+                "SELECT game_started FROM guild_config WHERE guild_id=$1", self.guild_id)
+            if not cfg or not cfg["game_started"]:
+                await interaction.followup.send(
+                    "No active contract is accepting deployments yet.", ephemeral=True)
+                return
+
+            active = await conn.fetchrow(
+                "SELECT id FROM squadrons "
+                "WHERE guild_id=$1 AND owner_id=$2 AND is_active=TRUE",
+                self.guild_id, interaction.user.id)
+            if active:
+                await interaction.followup.send(
+                    "You already have an active unit on the map.", ephemeral=True)
+                return
+
+            profile = await conn.fetchrow(
+                "SELECT recovery_status FROM commander_profiles "
+                "WHERE guild_id=$1 AND owner_id=$2",
+                self.guild_id, interaction.user.id)
+            if profile and profile["recovery_status"]:
+                await interaction.followup.send(
+                    "Your command is recovering from total loss of unit cohesion. "
+                    "It cannot redeploy until this contract ends.", ephemeral=True)
+                return
+
+            sq = await conn.fetchrow(
+                "SELECT * FROM squadrons "
+                "WHERE id=$1 AND guild_id=$2 AND owner_id=$3",
+                self.squadron_id, self.guild_id, interaction.user.id)
+            if not sq:
+                await interaction.followup.send(
+                    "That unit is no longer available in your command file.", ephemeral=True)
+                return
+
+            await ensure_commander_profile(
+                conn, self.guild_id, interaction.user.id, interaction.user.display_name)
+            await grant_default_banner(conn, self.guild_id, interaction.user.id)
+            await clear_recovery(conn, self.guild_id, interaction.user.id)
+            await conn.execute("""
+                UPDATE squadrons
+                SET owner_name=$1,
+                    planet_id=$2,
+                    hex_address=$3,
+                    hp=100,
+                    supply=GREATEST(supply, 10),
+                    is_active=TRUE,
+                    in_transit=FALSE,
+                    transit_destination=NULL,
+                    transit_turns_left=0,
+                    is_dug_in=FALSE,
+                    artillery_armed=FALSE,
+                    hexes_moved_this_turn=0
+                WHERE id=$4
+            """, interaction.user.display_name, planet_id, dest, sq["id"])
+
+            try:
+                from views.menu import refresh_enlist_counter
+                await refresh_enlist_counter(interaction.client, self.guild_id, conn)
+            except Exception:
+                pass
+            try:
+                from utils.hexmap import recompute_statuses
+                await recompute_statuses(conn, self.guild_id, planet_id)
+            except Exception:
+                pass
+
+        try:
+            from cogs.map_cog import auto_update_map, auto_update_overview
+            await auto_update_map(interaction.client, self.guild_id)
+            await auto_update_overview(interaction.client, self.guild_id)
+        except Exception:
+            pass
+
+        brig = get_brigade(sq["brigade"])
+        embed = discord.Embed(
+            title=f"Redeployed - {sq['name']}",
+            color=theme.get("color", 0xAA2222),
+            description=(
+                f"**Brigade:** {brig['name']}\n"
+                f"**Deployment Hex:** `{dest}`\n"
+                f"**Status:** restored to combat cohesion for the new contract."
+            ),
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+class ReturningUnitSelect(discord.ui.Select):
+    def __init__(self, guild_id: int, rows):
+        options = []
+        for row in rows[:25]:
+            brig = get_brigade(row["brigade"])
+            hp = row["hp"] or 0
+            options.append(discord.SelectOption(
+                label=row["name"][:100],
+                value=str(row["id"]),
+                description=f"{brig['name']} | HP {hp}/100",
+            ))
+        super().__init__(placeholder="Choose a roster unit to deploy...", options=options)
+        self.guild_id = guild_id
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.send_modal(
+            ExistingDeployModal(self.guild_id, int(self.values[0])))
+
+
+class ReturningUnitDeployView(discord.ui.View):
+    def __init__(self, guild_id: int, rows):
+        super().__init__(timeout=120)
+        self.add_item(ReturningUnitSelect(guild_id, rows))
+
+
+async def open_returning_deploy(interaction: discord.Interaction):
+    await ensure_guild(interaction.guild_id)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        theme = await get_theme(conn, interaction.guild_id)
+        planet_id = await get_active_planet_id(conn, interaction.guild_id)
+        cfg = await conn.fetchrow(
+            "SELECT game_started FROM guild_config WHERE guild_id=$1", interaction.guild_id)
+        if not cfg or not cfg["game_started"]:
+            await interaction.response.send_message(
+                "No active contract is accepting deployments yet.", ephemeral=True)
+            return
+
+        active = await conn.fetchrow(
+            "SELECT id FROM squadrons "
+            "WHERE guild_id=$1 AND owner_id=$2 AND is_active=TRUE",
+            interaction.guild_id, interaction.user.id)
+        if active:
+            await interaction.response.send_message(
+                "You already have an active unit on the map.", ephemeral=True)
+            return
+
+        profile = await conn.fetchrow(
+            "SELECT recovery_status FROM commander_profiles WHERE guild_id=$1 AND owner_id=$2",
+            interaction.guild_id, interaction.user.id)
+        if profile and profile["recovery_status"]:
+            await interaction.response.send_message(
+                "Your command is recovering from total loss of unit cohesion. "
+                "It cannot redeploy until this contract ends.", ephemeral=True)
+            return
+
+        rows = await conn.fetch(
+            "SELECT id, name, brigade, hp FROM squadrons "
+            "WHERE guild_id=$1 AND owner_id=$2 AND is_active=FALSE "
+            "ORDER BY id DESC",
+            interaction.guild_id, interaction.user.id)
+
+    if not rows:
+        await interaction.response.send_message(
+            "No existing unit is filed under your command. Use **Enlist Now** first.", ephemeral=True)
+        return
+    if len(rows) == 1:
+        await interaction.response.send_modal(
+            ExistingDeployModal(interaction.guild_id, rows[0]["id"]))
+        return
+
+    embed = discord.Embed(
+        title=f"{theme.get('bot_name', 'WARBOT')} - Returning Deployment",
+        color=theme.get("color", 0xAA2222),
+        description=(
+            "Select a rostered unit, then choose its deployment hex. "
+            "This places the same unit back on the map for the active contract."
+        ),
+    )
+    await interaction.response.send_message(
+        embed=embed,
+        view=ReturningUnitDeployView(interaction.guild_id, rows),
+        ephemeral=True)
+
 
 def _move_embed(hex_addr: str, brigade: str, unit_name: str,
                chosen_steps: int = None, remaining: int = None, budget: int = None) -> discord.Embed:
@@ -947,24 +1157,6 @@ class PlayerPanelView(discord.ui.View):
             embed = await _build_commander_file_embed(conn, i.guild_id, i.user, theme)
         await i.response.send_message(embed=embed, ephemeral=True)
 
-    @discord.ui.button(label="Enlist", style=discord.ButtonStyle.success, row=0)
-    async def enlist(self, i: discord.Interaction, b: discord.ui.Button):
-        from views.menu import _UnitNameModal
-        try:
-            modal = _UnitNameModal(i.guild_id, returning=False)
-        except TypeError:
-            modal = _UnitNameModal(i.guild_id)
-        await i.response.send_modal(modal)
-
-    @discord.ui.button(label="Deploy", style=discord.ButtonStyle.primary, row=0)
-    async def deploy(self, i: discord.Interaction, b: discord.ui.Button):
-        from views.menu import _UnitNameModal
-        try:
-            modal = _UnitNameModal(i.guild_id, returning=True)
-        except TypeError:
-            modal = _UnitNameModal(i.guild_id)
-        await i.response.send_modal(modal)
-
     @discord.ui.button(label="My Unit", style=discord.ButtonStyle.secondary, row=1)
     async def my_unit(self, i: discord.Interaction, b: discord.ui.Button):
         await send_unit_panel(i, self.guild_id)
@@ -977,8 +1169,8 @@ def _player_panel_embed(theme: dict) -> discord.Embed:
         color=theme.get("color", 0xAA2222),
         description=(
             "**Commandant access granted.**\n"
-            "Open your file, enlist a first unit, redeploy into a fresh contract, "
-            "or check your current field unit."
+            "Open your command file or check your current field unit. "
+            "Enlistment and redeployment are handled from the enlistment board."
         ),
     ).set_footer(text=theme.get("flavor_text", "The contract must be fulfilled."))
 
