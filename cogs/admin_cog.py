@@ -61,6 +61,27 @@ async def _is_gm(interaction: discord.Interaction) -> bool:
     return role is not None and role in interaction.user.roles
 
 
+async def _refresh_public_surfaces(bot, guild_id: int, conn=None, *, maps: bool = True):
+    """Best-effort refresh for persistent public embeds after state changes."""
+    try:
+        from views.menu import refresh_public_panels
+        if conn is not None:
+            await refresh_public_panels(bot, guild_id, conn)
+        else:
+            pool = await get_pool()
+            async with pool.acquire() as live_conn:
+                await refresh_public_panels(bot, guild_id, live_conn)
+    except Exception:
+        pass
+    if maps:
+        try:
+            from cogs.map_cog import auto_update_map, auto_update_overview
+            await auto_update_map(bot, guild_id)
+            await auto_update_overview(bot, guild_id)
+        except Exception:
+            pass
+
+
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # ADMIN PANEL
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -114,7 +135,7 @@ class AdminPanelView(discord.ui.View):
         pool = await get_pool()
         async with pool.acquire() as conn:
             planet_id = await get_active_planet_id(conn, i.guild_id)
-            for tbl in ("squadrons", "enemy_units", "combat_log", "turn_history", "enemy_gm_moves"):
+            for tbl in ("squadrons", "enemy_units", "combat_log", "turn_history", "enemy_gm_moves", "movement_arrows"):
                 await conn.execute(
                     f"DELETE FROM {tbl} WHERE guild_id=$1 AND planet_id=$2",
                     i.guild_id, planet_id)
@@ -125,6 +146,7 @@ class AdminPanelView(discord.ui.View):
                 "UPDATE guild_config SET game_started=FALSE, last_turn_at=NOW() "
                 "WHERE guild_id=$1", i.guild_id)
         await i.edit_original_response(content="War data cleared.", view=None)
+        await _refresh_public_surfaces(self.bot, i.guild_id)
 
     @discord.ui.button(label="ðŸ“Š Status", style=discord.ButtonStyle.secondary, row=0)
     async def game_status(self, i: discord.Interaction, b: discord.ui.Button):
@@ -287,6 +309,7 @@ class AdminPanelView(discord.ui.View):
                         ON CONFLICT (guild_id, planet_id, address) DO UPDATE SET terrain=EXCLUDED.terrain
                     """, i.guild_id, planet_id, addr, terrain)
         await i.followup.send("Terrain generated with clustered tactical biomes.", ephemeral=True)
+        await _refresh_public_surfaces(self.bot, i.guild_id)
 
     @discord.ui.button(label="ðŸ”ƒ Reset Terrain", style=discord.ButtonStyle.danger, row=0)
     async def map_reset_terrain(self, i: discord.Interaction, b: discord.ui.Button):
@@ -299,6 +322,7 @@ class AdminPanelView(discord.ui.View):
                 "DELETE FROM hex_terrain WHERE guild_id=$1 AND planet_id=$2",
                 i.guild_id, planet_id)
         await i.response.send_message("Terrain reset to flat.", ephemeral=True)
+        await _refresh_public_surfaces(self.bot, i.guild_id)
 
     # â”€â”€ Row 3: Channels â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -913,6 +937,7 @@ class _PlanetAddModal(discord.ui.Modal, title="Add Planet"):
             await ensure_hexes(i.guild_id, conn, row["id"])
         await i.response.send_message(
             f"Planet **{name}** added (ID {row['id']}).", ephemeral=True)
+        await _refresh_public_surfaces(i.client, i.guild_id)
 
 
 class _PlanetSetActiveModal(discord.ui.Modal, title="Set Active Planet"):
@@ -937,12 +962,7 @@ class _PlanetSetActiveModal(discord.ui.Modal, title="Set Active Planet"):
                 "UPDATE guild_config SET active_planet_id=$1 WHERE guild_id=$2",
                 planet["id"], i.guild_id)
         await i.response.send_message(f"Active theatre: **{planet['name']}**.", ephemeral=True)
-        try:
-            from cogs.map_cog import auto_update_map, auto_update_overview
-            await auto_update_map(self.bot, i.guild_id)
-            await auto_update_overview(self.bot, i.guild_id)
-        except Exception:
-            pass
+        await _refresh_public_surfaces(self.bot, i.guild_id)
 
 
 class _PlanetRemoveModal(discord.ui.Modal, title="Remove Planet"):
@@ -970,6 +990,7 @@ class _PlanetRemoveModal(discord.ui.Modal, title="Remove Planet"):
             await conn.execute(
                 "DELETE FROM planets WHERE guild_id=$1 AND id=$2", i.guild_id, pid)
         await i.response.send_message(f"Planet **{name}** removed.", ephemeral=True)
+        await _refresh_public_surfaces(i.client, i.guild_id)
 
 
 # Planet Edit â€” two-step: pick field then enter value
@@ -1022,6 +1043,7 @@ class _PlanetEditModal(discord.ui.Modal, title="Edit Planet"):
                 val, i.guild_id, planet["id"])
         await i.response.send_message(
             f"**{name}** â€” {PLANET_EDIT_FIELDS[self.field]} updated to `{val}`.", ephemeral=True)
+        await _refresh_public_surfaces(i.client, i.guild_id)
 
 
 # Theme
@@ -1070,6 +1092,7 @@ class _ThemeSetModal(discord.ui.Modal, title="Set Theme"):
                 val, i.guild_id)
         await i.response.send_message(
             f"**{THEME_FIELDS[self.field]}** set to `{val}`.", ephemeral=True)
+        await _refresh_public_surfaces(i.client, i.guild_id, maps=False)
 
 
 class _ThemeColorModal(discord.ui.Modal, title="Set Accent Color"):
@@ -1092,6 +1115,7 @@ class _ThemeColorModal(discord.ui.Modal, title="Set Accent Color"):
                 "UPDATE guild_config SET theme_color=$1 WHERE guild_id=$2",
                 color_int, i.guild_id)
         await i.response.send_message(f"Accent color: `#{raw.upper()}`.", ephemeral=True)
+        await _refresh_public_surfaces(i.client, i.guild_id, maps=False)
 
 
 # Terrain â€” two-step: pick terrain type then enter hex
@@ -1138,6 +1162,7 @@ class _TerrainHexModal(discord.ui.Modal, title="Set Terrain"):
             """, i.guild_id, planet_id, addr, self.terrain)
         await i.response.send_message(
             f"`{addr}` set to **{self.terrain.title()}**.", ephemeral=True)
+        await _refresh_public_surfaces(i.client, i.guild_id)
 
 
 # Channels â€” generic modal that resolves channel by ID or mention
@@ -1370,6 +1395,7 @@ class _StartContractModal(discord.ui.Modal, title="Start Contract"):
                 "SELECT announcement_channel_id FROM guild_config WHERE guild_id=$1", i.guild_id)
         await i.response.send_message(
             f"âœ… **Contract: {name}** has started!", ephemeral=True)
+        await _refresh_public_surfaces(self.bot, i.guild_id)
         if cfg and cfg["announcement_channel_id"]:
             channel = i.guild.get_channel(cfg["announcement_channel_id"])
             if channel:
@@ -1429,6 +1455,8 @@ class _ContractOutcomeModal(discord.ui.Modal, title="Conclude Contract"):
             if latest_contract:
                 await conn.execute("UPDATE guild_config SET fleet_pool_available=fleet_pool_available+$1 WHERE guild_id=$2", latest_contract['fleet_count'] or 0, i.guild_id)
                 await conn.execute("UPDATE contracts SET status=$1 WHERE id=$2", 'concluded_success' if success else 'concluded_failure', latest_contract['id'])
+            tempo_gain = random.randint(100, 200) if success else random.randint(25, 50)
+            tempo_result = await add_operational_tempo(conn, i.guild_id, tempo_gain)
             await conn.execute(
                 "UPDATE guild_config SET game_started=FALSE WHERE guild_id=$1", i.guild_id)
             await conn.execute("""
@@ -1445,6 +1473,7 @@ class _ContractOutcomeModal(discord.ui.Modal, title="Conclude Contract"):
         contract_name = (cfg["contract_name"] if cfg and cfg["contract_name"] else "Contract")
         await i.response.send_message(
             f"{icon} **{label}** posted to announcement channel.", ephemeral=True)
+        await _refresh_public_surfaces(self.bot, i.guild_id)
         if cfg and cfg["announcement_channel_id"]:
             channel = i.guild.get_channel(cfg["announcement_channel_id"])
             if channel:
@@ -1486,8 +1515,14 @@ class _SpawnEnemyModal(discord.ui.Modal, title="Spawn Enemy Unit"):
                 "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
                 i.guild_id, planet_id, str(self.unit_type).strip()[:40], addr,
                 10+v(), 10+v(), 10+v(), 10+v(), 10+v(), 10+v(), hp)
+            try:
+                from utils.hexmap import recompute_statuses
+                await recompute_statuses(conn, i.guild_id, planet_id)
+            except Exception:
+                pass
         await i.response.send_message(
             f"ðŸ‘¾ **{str(self.unit_type).strip()}** spawned at `{addr}` with **{hp} HP**.", ephemeral=True)
+        await _refresh_public_surfaces(i.client, i.guild_id)
 
 
 class _BulkSpawnEnemyModal(discord.ui.Modal, title="Bulk Spawn Enemy Units"):
@@ -1552,6 +1587,11 @@ class _BulkSpawnEnemyModal(discord.ui.Modal, title="Bulk Spawn Enemy Units"):
                     i.guild_id, planet_id, unit_name, addr,
                     10+v(), 10+v(), 10+v(), 10+v(), 10+v(), 10+v(), hp)
                 successes.append(f"**{unit_name}** at `{addr}`")
+            try:
+                from utils.hexmap import recompute_statuses
+                await recompute_statuses(conn, i.guild_id, planet_id)
+            except Exception:
+                pass
 
         parts_out = [f"Spawned {len(successes)} enemy unit(s) with **{hp} HP**:"]
         parts_out.extend(successes[:30])
@@ -1562,6 +1602,7 @@ class _BulkSpawnEnemyModal(discord.ui.Modal, title="Bulk Spawn Enemy Units"):
             parts_out.append(f"{len(errors)} line(s) skipped:")
             parts_out.extend(errors[:10])
         await i.response.send_message("\n".join(parts_out)[:2000], ephemeral=True)
+        await _refresh_public_surfaces(i.client, i.guild_id)
 
 
 class _MoveEnemyModal(discord.ui.Modal, title="Queue Enemy Move"):
@@ -1655,13 +1696,21 @@ class _RemoveEnemyModal(discord.ui.Modal, title="Remove Enemy Unit"):
             await i.response.send_message("Unit ID must be a number.", ephemeral=True); return
         pool = await get_pool()
         async with pool.acquire() as conn:
+            planet_id = await get_active_planet_id(conn, i.guild_id)
             result = await conn.execute(
                 "UPDATE enemy_units SET is_active=FALSE WHERE guild_id=$1 AND id=$2",
                 i.guild_id, uid)
+            if result != "UPDATE 0":
+                try:
+                    from utils.hexmap import recompute_statuses
+                    await recompute_statuses(conn, i.guild_id, planet_id)
+                except Exception:
+                    pass
         if result == "UPDATE 0":
             await i.response.send_message(f"Enemy unit {uid} not found.", ephemeral=True)
         else:
             await i.response.send_message(f"Enemy unit **{uid}** removed.", ephemeral=True)
+            await _refresh_public_surfaces(i.client, i.guild_id)
 
 
 # â”€â”€ Confirm view â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

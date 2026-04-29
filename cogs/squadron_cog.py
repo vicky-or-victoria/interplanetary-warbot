@@ -459,6 +459,43 @@ def brigade_picker_embed(unit_name: str, returning: bool = False) -> discord.Emb
     ).set_footer(text="Select your brigade from the dropdown below.")
 
 
+def _brigade_stats_line(stats: dict) -> str:
+    return (
+        f"ATK {stats['attack']:>2} | DEF {stats['defense']:>2} | "
+        f"SPD {stats['speed']:>2} | MRL {stats['morale']:>2} | "
+        f"SUP {stats['supply']:>2} | RCN {stats['recon']:>2}"
+    )
+
+
+def brigade_picker_embed(unit_name: str, returning: bool = False) -> discord.Embed:
+    title = f"Deploy Returning Command - {unit_name}" if returning else f"Choose Your Brigade - {unit_name}"
+    embed = discord.Embed(
+        title=title,
+        description=(
+            "Select a brigade file for the unit you are creating. These values are "
+            "pulled from the same live registry used by Brigade Info."
+        ),
+        color=0xAA2222,
+    )
+    for b in BRIGADES.values():
+        stats = _brigade_stats_line(b["stats"])
+        specials = "\n".join(f"- {text}" for text in b.get("specials", [])[:3])
+        if not specials:
+            specials = "- Standard line unit"
+        embed.add_field(
+            name=f"{b['emoji']} {b['name']}",
+            value=(
+                f"{b['description']}\n"
+                f"```{stats}```"
+                f"Transit: **{b['transit_turns']}** turn(s) | "
+                f"Move step: **{b['move_steps']}** hex(es)\n"
+                f"{specials}"
+            ),
+            inline=False)
+    embed.set_footer(text="Select your brigade from the dropdown below.")
+    return embed
+
+
 class BrigadePickerView(discord.ui.View):
     def __init__(self, guild_id: int, unit_name: str):
         super().__init__(timeout=120)
@@ -591,8 +628,8 @@ class DeployModal(discord.ui.Modal, title="Deploy Your Unit"):
                         pass
 
             try:
-                from views.menu import refresh_enlist_counter
-                await refresh_enlist_counter(interaction.client, self.guild_id, conn)
+                from views.menu import refresh_public_panels
+                await refresh_public_panels(interaction.client, self.guild_id, conn)
             except Exception:
                 pass
 
@@ -734,8 +771,8 @@ class ExistingDeployModal(discord.ui.Modal, title="Deploy Existing Unit"):
             await conn.execute("INSERT INTO unit_contract_map (guild_id, squadron_id, contract_id) VALUES ($1,$2,$3) ON CONFLICT (guild_id, squadron_id) DO UPDATE SET contract_id=EXCLUDED.contract_id", self.guild_id, sq['id'], active_contract['id'])
 
             try:
-                from views.menu import refresh_enlist_counter
-                await refresh_enlist_counter(interaction.client, self.guild_id, conn)
+                from views.menu import refresh_public_panels
+                await refresh_public_panels(interaction.client, self.guild_id, conn)
             except Exception:
                 pass
             try:

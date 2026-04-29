@@ -139,8 +139,9 @@ async def auto_update_map(bot, guild_id: int, movement_arrows: list = None) -> b
     try:
         if cfg["map_message_id"]:
             try:
-                old = await channel.fetch_message(cfg["map_message_id"])
-                await old.delete()
+                msg = await channel.fetch_message(cfg["map_message_id"])
+                await msg.edit(embed=embed, attachments=[f])
+                return True
             except Exception:
                 pass
         new_msg = await channel.send(embed=embed, file=f)
@@ -185,8 +186,9 @@ async def auto_update_overview(bot, guild_id: int) -> bool:
     try:
         if cfg["overview_message_id"]:
             try:
-                old = await channel.fetch_message(cfg["overview_message_id"])
-                await old.delete()
+                msg = await channel.fetch_message(cfg["overview_message_id"])
+                await msg.edit(embed=embed, attachments=[f])
+                return True
             except Exception:
                 pass
         new_msg = await channel.send(embed=embed, file=f)
