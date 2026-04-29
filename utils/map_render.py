@@ -568,9 +568,9 @@ def draw_terrain_icon(draw, center, terrain_type, size):
     if terrain == "plains":
         return
     cx, cy = center
-    s = max(7, int(size * 0.24))
-    badge_w = max(10, int(size * 0.34))
-    badge_h = max(7, int(size * 0.24))
+    s = max(10, int(size * 0.34))
+    badge_w = max(17, int(size * 0.58))
+    badge_h = max(12, int(size * 0.40))
     x1 = cx - badge_w / 2
     y1 = cy - badge_h / 2
     x2 = cx + badge_w / 2
@@ -726,7 +726,7 @@ def render_planet_map(
         occupied = _has_unit_markers(unit_data, key)
         label_pos = _hex_label_positions(cx, cy, occupied)
 
-        draw_terrain_hex(draw, corners, terrain, (cx, cy), (cx, cy - HEX_SIZE * 0.34))
+        draw_terrain_hex(draw, corners, terrain, (cx, cy), (cx, cy - HEX_SIZE * 0.46))
 
         tint = STATUS_TINTS.get(status, (0,0,0,0))
         if tint[3] > 0:
@@ -1259,7 +1259,7 @@ def render_movement_map(
         occupied = _has_unit_markers(unit_data, key)
         label_pos = _hex_label_positions(cx, cy, occupied)
 
-        draw_terrain_hex(draw, corners, terrain, (cx, cy), (cx, cy - HEX_SIZE * 0.34))
+        draw_terrain_hex(draw, corners, terrain, (cx, cy), (cx, cy - HEX_SIZE * 0.46))
 
         tint = STATUS_TINTS.get(status, (0,0,0,0))
         if tint[3] > 0:
