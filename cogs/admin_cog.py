@@ -619,8 +619,9 @@ class _PagedPanelView(discord.ui.View):
                 style=item.get("style", discord.ButtonStyle.secondary),
                 row=idx // 4)
 
-            async def callback(i: discord.Interaction, b=button, method=item["method"]):
-                await getattr(self.legacy, method)(i, b)
+            async def callback(i: discord.Interaction, method=item["method"]):
+                legacy_button = getattr(self.legacy, method)
+                await legacy_button.callback(i)
 
             button.callback = callback
             self.add_item(button)
