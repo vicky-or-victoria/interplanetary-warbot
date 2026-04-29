@@ -15,7 +15,7 @@ from discord.ext import commands
 
 from utils.db import get_pool, ensure_guild, get_theme, get_active_planet_id
 from utils.hexmap import ensure_hexes, is_valid, GRID_COORDS, hex_key
-from utils.map_render import TERRAIN_TYPES
+from utils.map_render import TERRAIN_TYPES, generate_water_bodies
 from utils.brigades import BRIGADES
 from utils.profiles import cosmetic_key, ensure_commander_profile, grant_default_banner
 
@@ -262,24 +262,30 @@ class AdminPanelView(discord.ui.View):
             planet_id = await get_active_planet_id(conn, i.guild_id)
             from utils.hexmap import GRID_COORDS, hex_key
             import random
-            # Weighted terrain distribution: mostly flat, with clusters of others
+            # Weighted land distribution plus clustered water bodies.
             weights = {
-                "flat":     45,
+                "plains":   45,
                 "forest":   20,
-                "hill":     15,
+                "hills":    15,
                 "mountain":  8,
                 "city":      5,
                 "military":  4,
                 "fort":      3,
             }
             terrain_pool = [t for t, w in weights.items() for _ in range(w)]
+            water_hexes = generate_water_bodies(
+                GRID_COORDS,
+                water_ratio=0.08,
+                body_count=3,
+                seed=i.guild_id * 1009 + planet_id,
+            )
             await conn.execute(
                 "DELETE FROM hex_terrain WHERE guild_id=$1 AND planet_id=$2",
                 i.guild_id, planet_id)
             for gq, gr in GRID_COORDS:
                 addr    = hex_key(gq, gr)
-                terrain = random.choice(terrain_pool)
-                if terrain != "flat":   # skip inserting flat — it's the default
+                terrain = "water" if (gq, gr) in water_hexes else random.choice(terrain_pool)
+                if terrain != "plains":   # skip inserting plains — it's the default
                     await conn.execute("""
                         INSERT INTO hex_terrain (guild_id, planet_id, address, terrain)
                         VALUES ($1,$2,$3,$4)
