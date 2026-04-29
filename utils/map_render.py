@@ -634,6 +634,23 @@ def draw_coastline(draw, hex_points, neighbors, terrain_type):
 
 # ── Layout ─────────────────────────────────────────────────────────────────────
 
+def draw_hex_coordinate(draw, label, label_pos, center, terrain_type, font):
+    terrain = _terrain_key(terrain_type)
+    base = TERRAIN_DEFS[terrain]["color"]
+    luminance = sum(base) / 3
+    fill = (18, 18, 18, 150) if luminance >= 145 else (232, 232, 232, 150)
+    try:
+        bb = draw.textbbox((0, 0), label, font=font)
+        tw = bb[2] - bb[0]
+        th = bb[3] - bb[1]
+        cx, _ = center
+        x = label_pos["coord_x"] if label_pos["cornered"] else cx - tw / 2
+        y = label_pos["coord_y"] - th / 2
+        draw.text((x, y), label, font=font, fill=fill)
+    except Exception:
+        pass
+
+
 HEX_SIZE  = 32
 PADDING   = 28
 TITLE_H   = 54
@@ -673,7 +690,7 @@ def render_planet_map(
 
     f_title  = _font(_SERIF,   20)
     f_abbr   = _font(_SANS,     8)
-    f_coord  = _font(_MONO,     6)
+    f_coord  = _font(_MONO,     7)
     f_pip    = _font(_SANS,     7)
     f_legend = _font(_SANSREG, 11)
 
@@ -703,21 +720,7 @@ def render_planet_map(
             neighbor_terrains.append(hex_data.get(nkey, {}).get("terrain", "plains"))
         draw_coastline(draw, corners, neighbor_terrains, terrain)
 
-        lbl = key
-        try:
-            bb  = draw.textbbox((0,0), lbl, font=f_coord)
-            lw  = (bb[2]-bb[0])/2
-            lh  = (bb[3]-bb[1])/2
-            lx2 = label_pos["coord_x"] if label_pos["cornered"] else cx - lw
-            label_cy = label_pos["coord_y"]
-            ly2 = label_cy - lh
-            light_tile = terrain in ("plains", "city", "hills", "forest", "fort")
-            shadow = (255,255,255,24) if not light_tile else (0,0,0,18)
-            fill = (26, 26, 26, 78) if light_tile else (225, 225, 225, 84)
-            draw.text((lx2+1, ly2+1), lbl, font=f_coord, fill=shadow)
-            draw.text((lx2, ly2), lbl, font=f_coord, fill=fill)
-        except Exception:
-            pass
+        draw_hex_coordinate(draw, key, label_pos, (cx, cy), terrain, f_coord)
 
     # ── Draw unit markers in a separate pass so tint compositing can't erase them ──
     draw = ImageDraw.Draw(img)
@@ -1209,7 +1212,7 @@ def render_movement_map(
     draw = ImageDraw.Draw(img)
 
     f_abbr  = _font(_SANS,  8)
-    f_coord = _font(_MONO,  6)
+    f_coord = _font(_MONO,  7)
     f_title = _font(_SERIF, 16)
     f_pip   = _font(_SANS,  7)
 
@@ -1250,21 +1253,7 @@ def render_movement_map(
             neighbor_terrains.append(hex_data.get(nkey, {}).get("terrain", "plains"))
         draw_coastline(draw, corners, neighbor_terrains, terrain)
 
-        lbl = key
-        try:
-            bb  = draw.textbbox((0,0), lbl, font=f_coord)
-            lw2 = (bb[2]-bb[0])/2
-            lh2 = (bb[3]-bb[1])/2
-            label_cy = label_pos["coord_y"]
-            lx2 = label_pos["coord_x"] if label_pos["cornered"] else cx - lw2
-            ly2 = label_cy-lh2
-            light_tile = terrain in ("plains", "city", "hills", "forest", "fort")
-            shadow = (255,255,255,24) if not light_tile else (0,0,0,18)
-            fill = (26, 26, 26, 78) if light_tile else (225, 225, 225, 84)
-            draw.text((lx2+1, ly2+1), lbl, font=f_coord, fill=shadow)
-            draw.text((lx2, ly2), lbl, font=f_coord, fill=fill)
-        except Exception:
-            pass
+        draw_hex_coordinate(draw, key, label_pos, (cx, cy), terrain, f_coord)
 
     # ── Range ring overlay (drawn before unit markers so markers sit on top) ──
     if remaining is not None and budget is not None:
