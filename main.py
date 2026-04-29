@@ -55,9 +55,15 @@ class Warbot(commands.Bot):
             except Exception as e:
                 log.error(f"Failed to load {cog}: {e}", exc_info=True)
 
-        # Sync slash commands globally
-        await self.tree.sync()
-        log.info("Slash commands synced.")
+        # Sync slash commands globally + per guild for immediate availability.
+        global_synced = await self.tree.sync()
+        log.info(f"Global slash commands synced: {len(global_synced)}")
+        for guild in self.guilds:
+            try:
+                guild_synced = await self.tree.sync(guild=guild)
+                log.info(f"Guild sync OK: {guild.name} ({guild.id}) -> {len(guild_synced)} commands")
+            except Exception as e:
+                log.warning(f"Guild sync failed for {guild.name} ({guild.id}): {e}")
 
         # Register persistent views so buttons survive restarts
         # guild_id=0 is a sentinel; the real guild_id is read per-interaction
@@ -79,6 +85,11 @@ class Warbot(commands.Bot):
     async def on_guild_join(self, guild: discord.Guild):
         from utils.db import ensure_guild
         await ensure_guild(guild.id)
+        try:
+            guild_synced = await self.tree.sync(guild=guild)
+            log.info(f"Synced commands on join for {guild.name} ({guild.id}): {len(guild_synced)}")
+        except Exception as e:
+            log.warning(f"Failed to sync commands on join for {guild.name} ({guild.id}): {e}")
         log.info(f"Joined guild: {guild.name} ({guild.id})")
 
     async def close(self):

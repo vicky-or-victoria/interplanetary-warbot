@@ -1775,6 +1775,23 @@ class AdminCog(commands.Cog):
         embed = view._embed()
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
+    @app_commands.command(name="sync_commands",
+                          description="Force-sync slash commands for this server.")
+    async def sync_commands(self, interaction: discord.Interaction):
+        if not await _is_admin(self.bot, interaction):
+            await interaction.response.send_message("Admins only.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        guild_obj = interaction.guild
+        if guild_obj is None:
+            await interaction.followup.send("Run this inside a server.", ephemeral=True)
+            return
+        synced = await self.bot.tree.sync(guild=guild_obj)
+        await interaction.followup.send(
+            f"✅ Synced {len(synced)} slash command(s) for **{guild_obj.name}**.",
+            ephemeral=True,
+        )
+
 
 async def setup(bot):
     await bot.add_cog(AdminCog(bot))
