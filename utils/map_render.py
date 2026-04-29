@@ -250,18 +250,18 @@ TERRAIN_ALIASES = {
 }
 
 TERRAIN_DEFS = {
-    "plains":   {"color": (232, 224, 198), "label": "Plains"},
-    "forest":   {"color": (105, 145, 105), "label": "Forest"},
-    "hills":    {"color": (150, 120, 85),  "label": "Hills"},
-    "mountain": {"color": (95, 95, 95),    "label": "Mountain"},
-    "city":     {"color": (165, 176, 185), "label": "City"},
-    "fort":     {"color": (120, 132, 155), "label": "Fort"},
-    "military": {"color": (100, 125, 90),  "label": "Military"},
-    "water":    {"color": (50, 85, 120),   "label": "Water"},
+    "plains":   {"color": (200, 200, 200), "label": "Plains"},
+    "forest":   {"color": (170, 170, 170), "label": "Forest"},
+    "hills":    {"color": (150, 150, 150), "label": "Hills"},
+    "mountain": {"color": (110, 110, 110), "label": "Mountain"},
+    "city":     {"color": (180, 180, 180), "label": "City"},
+    "fort":     {"color": (160, 160, 160), "label": "Fort"},
+    "military": {"color": (140, 140, 140), "label": "Military"},
+    "water":    {"color": (90, 90, 100),   "label": "Water"},
 }
 
-COASTLINE = (210, 190, 135, 255)
-COASTLINE_DARK = (120, 105, 75, 230)
+COASTLINE = (188, 188, 176, 255)
+COASTLINE_DARK = (82, 82, 76, 230)
 
 STATUS_TINTS = {
     "players":         (70,  90, 210, 78),
@@ -281,23 +281,101 @@ def get_neighbors(q, r):
     return [(q + dq, r + dr) for dq, dr in HEX_DIRECTIONS]
 
 
-def generate_water_bodies(grid_coords, water_ratio=0.08, body_count=3, seed=None):
+def _axial_distance(a, b):
+    aq, ar = a
+    bq, br = b
+    return max(abs(aq - bq), abs(ar - br), abs((aq + ar) - (bq + br)))
+
+
+def _edge_scores(coords):
+    return {
+        c: max(abs(c[0]), abs(c[1]), abs(c[0] + c[1]))
+        for c in coords
+    }
+
+
+def generate_biome_cluster(
+    grid_coords,
+    terrain_type,
+    seed_count,
+    target_size,
+    edge_bias=False,
+    seed=None,
+    blocked=None,
+    seed_candidates=None,
+):
+    coords = list(grid_coords)
+    coord_set = set(coords)
+    blocked = set(blocked or [])
+    available = [c for c in coords if c not in blocked]
+    if not available or target_size <= 0:
+        return set()
+
+    rng = random.Random(seed if seed is not None else len(coords) * 3251 + len(terrain_type))
+    target = min(len(available), max(1, int(target_size)))
+    edge_score = _edge_scores(coords)
+    candidates = [c for c in (seed_candidates or available) if c in coord_set and c not in blocked]
+    if not candidates:
+        candidates = available
+    if edge_bias:
+        candidates = sorted(candidates, key=lambda c: edge_score[c], reverse=True)
+    else:
+        rng.shuffle(candidates)
+
+    seeds = []
+    for candidate in candidates:
+        if len(seeds) >= max(1, seed_count):
+            break
+        min_gap = 4 if len(coords) > 200 else 2
+        if not seeds or all(_axial_distance(candidate, s) >= min_gap for s in seeds):
+            seeds.append(candidate)
+    while len(seeds) < max(1, seed_count):
+        seeds.append(rng.choice(candidates))
+
+    cluster = set(seeds[:target])
+    frontier = list(cluster)
+    while frontier and len(cluster) < target:
+        origin = rng.choice(frontier)
+        neighbors = [n for n in get_neighbors(*origin) if n in coord_set and n not in blocked]
+        weighted = []
+        for n in neighbors:
+            same_neighbors = sum((nn in cluster) for nn in get_neighbors(*n))
+            weight = 1 + same_neighbors * 5
+            if edge_bias:
+                weight += max(0, edge_score[n] - 10)
+            weighted.extend([n] * weight)
+        if not weighted:
+            try:
+                frontier.remove(origin)
+            except ValueError:
+                pass
+            continue
+        picked = rng.choice(weighted)
+        if picked not in cluster:
+            cluster.add(picked)
+            frontier.append(picked)
+        elif all(n in cluster or n in blocked for n in neighbors):
+            try:
+                frontier.remove(origin)
+            except ValueError:
+                pass
+    return cluster
+
+
+def generate_water_bodies(grid_coords, water_ratio=0.06, body_count=2, seed=None):
     coords = list(grid_coords)
     coord_set = set(coords)
     if not coords:
         return set()
     rng = random.Random(seed if seed is not None else len(coords) * 7919)
     target = max(1, int(len(coords) * water_ratio))
-    edge_score = {
-        c: max(abs(c[0]), abs(c[1]), abs(c[0] + c[1]))
-        for c in coords
-    }
+    edge_score = _edge_scores(coords)
     edge_candidates = sorted(coords, key=lambda c: edge_score[c], reverse=True)
     seeds = []
     for candidate in edge_candidates:
         if len(seeds) >= body_count:
             break
-        if not seeds or all(hex_distance(hex_key(*candidate), hex_key(*s)) > 5 for s in seeds):
+        if not seeds or all(_axial_distance(candidate, s) > 5 for s in seeds):
             seeds.append(candidate)
     while len(seeds) < body_count:
         seeds.append(rng.choice(edge_candidates))
@@ -334,6 +412,126 @@ def generate_water_bodies(grid_coords, water_ratio=0.08, body_count=3, seed=None
     return cleaned or water
 
 
+def cleanup_isolated_tiles(terrain_map, protected=None):
+    protected = set(protected or [])
+    coords = set(terrain_map.keys())
+    cleaned = dict(terrain_map)
+    for coord, terrain in terrain_map.items():
+        if terrain == "plains" or terrain in protected:
+            continue
+        neighbors = [n for n in get_neighbors(*coord) if n in coords]
+        same = sum(cleaned.get(n, "plains") == terrain for n in neighbors)
+        if same > 0:
+            continue
+        neighbor_counts = {}
+        for n in neighbors:
+            nt = cleaned.get(n, "plains")
+            if nt in protected:
+                continue
+            neighbor_counts[nt] = neighbor_counts.get(nt, 0) + 1
+        if neighbor_counts:
+            cleaned[coord] = max(neighbor_counts.items(), key=lambda item: item[1])[0]
+        else:
+            cleaned[coord] = "plains"
+    return cleaned
+
+
+def smooth_biome_terrain(terrain_map, passes=1, protected=None):
+    protected = set(protected or [])
+    coords = set(terrain_map.keys())
+    smoothed = dict(terrain_map)
+    for _ in range(max(0, passes)):
+        next_map = dict(smoothed)
+        for coord, terrain in smoothed.items():
+            if terrain in protected:
+                continue
+            counts = {}
+            for n in get_neighbors(*coord):
+                if n not in coords:
+                    continue
+                nt = smoothed.get(n, "plains")
+                if nt in protected:
+                    continue
+                counts[nt] = counts.get(nt, 0) + 1
+            if not counts:
+                continue
+            dominant, count = max(counts.items(), key=lambda item: item[1])
+            if count >= 3 and dominant in {"plains", "forest", "hills", "mountain", "water"}:
+                next_map[coord] = dominant
+        smoothed = next_map
+    return smoothed
+
+
+def generate_biome_terrain_map(grid_coords, seed=None):
+    coords = list(grid_coords)
+    if not coords:
+        return {}
+    rng = random.Random(seed if seed is not None else len(coords) * 104729)
+    total = len(coords)
+    terrain = {coord: "plains" for coord in coords}
+
+    water = generate_water_bodies(coords, water_ratio=0.06, body_count=rng.randint(1, 3), seed=rng.randint(1, 10**9))
+    for coord in water:
+        terrain[coord] = "water"
+
+    blocked = set(water)
+    forests = generate_biome_cluster(coords, "forest", seed_count=5, target_size=total * 0.16, seed=rng.randint(1, 10**9), blocked=blocked)
+    for coord in forests:
+        terrain[coord] = "forest"
+
+    blocked |= forests
+    hills = generate_biome_cluster(coords, "hills", seed_count=4, target_size=total * 0.13, seed=rng.randint(1, 10**9), blocked=set(water))
+    for coord in hills:
+        if terrain[coord] != "water":
+            terrain[coord] = "hills"
+
+    hill_neighbors = {
+        n
+        for coord in hills
+        for n in get_neighbors(*coord)
+        if n in terrain and terrain[n] not in {"water", "forest"}
+    } or {coord for coord in coords if terrain[coord] == "plains"}
+    mountains = generate_biome_cluster(
+        coords,
+        "mountain",
+        seed_count=3,
+        target_size=total * 0.055,
+        seed=rng.randint(1, 10**9),
+        blocked=set(water) | forests,
+        seed_candidates=hill_neighbors,
+    )
+    for coord in mountains:
+        if terrain[coord] != "water":
+            terrain[coord] = "mountain"
+
+    terrain = cleanup_isolated_tiles(terrain)
+    terrain = smooth_biome_terrain(terrain, passes=1, protected={"city", "fort", "military"})
+    for coord in water:
+        terrain[coord] = "water"
+
+    land = [coord for coord in coords if terrain[coord] != "water"]
+    rng.shuffle(land)
+    special_plan = [
+        ("city", max(2, total // 95)),
+        ("military", max(2, total // 120)),
+        ("fort", max(2, total // 140)),
+    ]
+    used_special = set()
+    for special, count in special_plan:
+        placed = 0
+        for coord in land:
+            if placed >= count:
+                break
+            if coord in used_special:
+                continue
+            if any(_axial_distance(coord, other) < 3 for other in used_special):
+                continue
+            terrain[coord] = special
+            used_special.add(coord)
+            placed += 1
+    return terrain
+
+
 def _shade_color(color, amount):
     return tuple(max(0, min(255, int(c + amount))) for c in color)
 
@@ -342,7 +540,8 @@ def _terrain_variation(key):
     # Deterministic per-hex variation, so regenerated maps do not shimmer.
     seed = sum((idx + 1) * ord(ch) for idx, ch in enumerate(key))
     rng = random.Random(seed)
-    return tuple(rng.randint(-10, 10) for _ in range(3))
+    value = rng.randint(-7, 7)
+    return (value, value, value)
 
 
 def _terrain_border(fill):
@@ -367,44 +566,36 @@ def _edge_points(hex_points, direction_index):
 def draw_terrain_icon(draw, center, terrain_type, size):
     terrain = _terrain_key(terrain_type)
     cx, cy = center
-    s = max(6, int(size * 0.24))
+    s = max(6, int(size * 0.22))
 
     if terrain == "forest":
-        fills = [(35, 78, 42, 82), (42, 90, 48, 88)]
-        offsets = [(-s * .18, s * .04), (s * .18, s * .00)]
-        for idx, (ox, oy) in enumerate(offsets):
-            x = cx + ox
-            y = cy + oy
-            draw.polygon(
-                [(x, y - s * .42), (x - s * .28, y + s * .22), (x + s * .28, y + s * .22)],
-                fill=fills[idx],
-            )
-            draw.line((x, y + s * .08, x, y + s * .30), fill=(60, 45, 30, 70), width=1)
+        return
     elif terrain == "mountain":
         draw.polygon(
             [(cx - s * .58, cy + s * .30), (cx - s * .08, cy - s * .55), (cx + s * .22, cy + s * .30)],
-            fill=(45, 45, 45, 82),
+            fill=(42, 42, 42, 82),
         )
         draw.polygon(
             [(cx - s * .12, cy + s * .32), (cx + s * .36, cy - s * .46), (cx + s * .68, cy + s * .32)],
-            fill=(55, 55, 55, 78),
+            fill=(58, 58, 58, 76),
         )
-        draw.polygon([(cx - s * .16, cy - s * .42), (cx - s * .08, cy - s * .55), (cx, cy - s * .36)], fill=(235, 235, 225, 70))
-        draw.polygon([(cx + s * .28, cy - s * .34), (cx + s * .36, cy - s * .46), (cx + s * .44, cy - s * .30)], fill=(235, 235, 225, 70))
+        draw.polygon([(cx - s * .16, cy - s * .42), (cx - s * .08, cy - s * .55), (cx, cy - s * .36)], fill=(220, 220, 220, 58))
+        draw.polygon([(cx + s * .28, cy - s * .34), (cx + s * .36, cy - s * .46), (cx + s * .44, cy - s * .30)], fill=(220, 220, 220, 58))
     elif terrain == "hills":
         return
     elif terrain == "city":
-        col = (50, 58, 66, 92)
+        col = (52, 52, 52, 78)
         draw.rectangle((cx - s * .45, cy - s * .10, cx - s * .18, cy + s * .28), fill=col)
-        draw.rectangle((cx - s * .10, cy - s * .32, cx + s * .12, cy + s * .28), fill=(55, 64, 72, 96))
+        draw.rectangle((cx - s * .10, cy - s * .32, cx + s * .12, cy + s * .28), fill=(48, 48, 48, 84))
         draw.rectangle((cx + s * .20, cy - s * .02, cx + s * .46, cy + s * .28), fill=col)
     elif terrain == "fort":
-        draw.rectangle((cx - s * .42, cy - s * .12, cx + s * .42, cy + s * .18), fill=(35, 42, 55, 72))
+        draw.rectangle((cx - s * .42, cy - s * .12, cx + s * .42, cy + s * .18), fill=(45, 45, 45, 66))
+        draw.line((cx - s * .28, cy - s * .22, cx + s * .28, cy - s * .22), fill=(70, 70, 70, 58), width=1)
     elif terrain == "military":
-        draw.arc((cx - s * .38, cy - s * .32, cx + s * .38, cy + s * .40), start=195, end=345, fill=(20, 38, 20, 76), width=2)
-        draw.rectangle((cx - s * .34, cy + s * .08, cx + s * .34, cy + s * .22), fill=(20, 38, 20, 70))
+        draw.arc((cx - s * .38, cy - s * .32, cx + s * .38, cy + s * .40), start=195, end=345, fill=(42, 42, 42, 56), width=1)
+        draw.rectangle((cx - s * .34, cy + s * .08, cx + s * .34, cy + s * .20), fill=(42, 42, 42, 54))
     elif terrain == "water":
-        wave = (165, 205, 220, 72)
+        wave = (190, 190, 200, 64)
         for oy in (s * .02,):
             pts = [
                 (cx - s * .42, cy + oy),
@@ -520,9 +711,9 @@ def render_planet_map(
             lx2 = label_pos["coord_x"] if label_pos["cornered"] else cx - lw
             label_cy = label_pos["coord_y"]
             ly2 = label_cy - lh
-            light_tile = terrain in ("plains", "city", "hills", "forest")
-            shadow = (255,255,255,32) if not light_tile else (0,0,0,24)
-            fill = (28, 28, 28, 92) if light_tile else (235, 240, 235, 96)
+            light_tile = terrain in ("plains", "city", "hills", "forest", "fort")
+            shadow = (255,255,255,24) if not light_tile else (0,0,0,18)
+            fill = (26, 26, 26, 78) if light_tile else (225, 225, 225, 84)
             draw.text((lx2+1, ly2+1), lbl, font=f_coord, fill=shadow)
             draw.text((lx2, ly2), lbl, font=f_coord, fill=fill)
         except Exception:
@@ -670,104 +861,223 @@ def render_planet_map(
 
 # ── Planetary system overview ────────────────────────────────────────────────────────────
 
+def _overview_value(planet, key, default="---"):
+    if planet is None:
+        return default
+    try:
+        return planet.get(key, default)
+    except Exception:
+        try:
+            return planet[key]
+        except Exception:
+            return default
+
+
+def _overview_text(draw, xy, text, font, fill, max_width=None):
+    text = str(text or "---")
+    if max_width:
+        try:
+            while len(text) > 3 and draw.textbbox((0, 0), text, font=font)[2] > max_width:
+                text = text[:-4] + "..."
+        except Exception:
+            pass
+    draw.text(xy, text, font=font, fill=fill)
+
+
+def _draw_overview_starfield(draw, width, height, seed):
+    rng = random.Random((seed or 1) * 7919 + width + height)
+    count = max(70, int(width * height / 12000))
+    for _ in range(count):
+        x = rng.randint(18, width - 18)
+        y = rng.randint(58, height - 24)
+        lum = rng.randint(34, 92)
+        if rng.random() < 0.12:
+            draw.ellipse((x - 1, y - 1, x + 1, y + 1), fill=(lum, lum, lum))
+        else:
+            draw.point((x, y), fill=(lum, lum, lum))
+
+
+def _draw_overview_top_bar(draw, width, theme, active_planet, turn_number, fonts):
+    draw.rectangle((0, 0, width, 58), fill=(10, 10, 11))
+    draw.line((24, 56, width - 24, 56), fill=(74, 74, 74), width=1)
+    title = f"{theme.get('bot_name', 'WARBOT')} | Interplanetary Theatre Overview"
+    _overview_text(draw, (28, 17), title, fonts["title"], (218, 218, 218), max_width=560)
+
+    info = [
+        ("Contractor", _overview_value(active_planet, "contractor", theme.get("player_faction", "---"))),
+        ("Enemy", _overview_value(active_planet, "enemy_type", theme.get("enemy_faction", "---"))),
+        ("Turn", str(turn_number or 0)),
+    ]
+    box_w, box_h, gap = 158, 34, 8
+    start_x = width - 28 - (box_w * len(info) + gap * (len(info) - 1))
+    for idx, (label, value) in enumerate(info):
+        x = start_x + idx * (box_w + gap)
+        draw.rectangle((x, 12, x + box_w, 12 + box_h), fill=(15, 15, 16), outline=(56, 56, 56))
+        _overview_text(draw, (x + 9, 16), label.upper(), fonts["mono"], (112, 112, 112), max_width=box_w - 18)
+        _overview_text(draw, (x + 9, 29), value, fonts["small"], (205, 205, 205), max_width=box_w - 18)
+
+
+def _draw_overview_active_panel(draw, box, active_planet, fonts):
+    x1, y1, x2, y2 = box
+    draw.rectangle(box, fill=(12, 12, 13), outline=(66, 66, 66))
+    draw.rectangle((x1, y1, x1 + 5, y2), fill=(138, 138, 138))
+    _overview_text(draw, (x1 + 18, y1 + 16), "ACTIVE THEATRE", fonts["mono"], (145, 145, 145), max_width=x2 - x1 - 36)
+    _overview_text(draw, (x1 + 18, y1 + 42), _overview_value(active_planet, "name", "No theatre"), fonts["title"], (232, 232, 232), max_width=x2 - x1 - 36)
+
+    fields = [
+        ("Status", "ACTIVE" if active_planet else "NO SIGNAL"),
+        ("Control", _overview_value(active_planet, "contractor")),
+        ("Enemy Presence", _overview_value(active_planet, "enemy_type")),
+        ("Fleets Deployed", str(_overview_value(active_planet, "player_units", 0))),
+        ("Hostile Contacts", str(_overview_value(active_planet, "enemy_units", 0))),
+    ]
+    y = y1 + 96
+    for label, value in fields:
+        draw.line((x1 + 18, y - 8, x2 - 18, y - 8), fill=(34, 34, 34), width=1)
+        _overview_text(draw, (x1 + 18, y), label.upper(), fonts["mono"], (104, 104, 104), max_width=110)
+        _overview_text(draw, (x1 + 132, y - 1), value, fonts["body"], (206, 206, 206), max_width=x2 - x1 - 150)
+        y += 42
+
+    log_y = y2 - 92
+    draw.rectangle((x1 + 18, log_y, x2 - 18, y2 - 18), fill=(8, 8, 9), outline=(40, 40, 40))
+    _overview_text(draw, (x1 + 30, log_y + 12), "SYSTEM LOG", fonts["mono"], (110, 110, 110), max_width=x2 - x1 - 60)
+    log = "Theatre telemetry stable. Awaiting next command cycle."
+    _overview_text(draw, (x1 + 30, log_y + 36), log, fonts["small"], (172, 172, 172), max_width=x2 - x1 - 60)
+
+
+def _draw_overview_node(draw, x, y, planet, is_active, fonts):
+    r = 16 if is_active else 10
+    if is_active:
+        for grow, lum in [(22, 34), (16, 52), (10, 76)]:
+            draw.ellipse((x - r - grow, y - r - grow, x + r + grow, y + r + grow), outline=(lum, lum, lum), width=1)
+        draw.ellipse((x - r, y - r, x + r, y + r), fill=(198, 198, 198), outline=(245, 245, 245), width=2)
+        draw.ellipse((x - r - 7, y - r - 7, x + r + 7, y + r + 7), outline=(218, 218, 218), width=2)
+    else:
+        draw.ellipse((x - r, y - r, x + r, y + r), fill=(8, 8, 9), outline=(112, 112, 112), width=2)
+
+    tick = 7 if is_active else 5
+    col = (180, 180, 180) if is_active else (78, 78, 78)
+    draw.line((x - r - tick, y, x - r - 2, y), fill=col, width=1)
+    draw.line((x + r + 2, y, x + r + tick, y), fill=col, width=1)
+    draw.line((x, y - r - tick, x, y - r - 2), fill=col, width=1)
+    draw.line((x, y + r + 2, x, y + r + tick), fill=col, width=1)
+
+    name = _overview_value(planet, "name", "Unknown")
+    label_col = (224, 224, 224) if is_active else (126, 126, 126)
+    _overview_text(draw, (x + r + 11, y - 10), name, fonts["body"], label_col, max_width=150)
+    status = "ACTIVE" if is_active else "STANDBY"
+    _overview_text(draw, (x + r + 11, y + 7), status, fonts["mono"], (150, 150, 150) if is_active else (78, 78, 78), max_width=120)
+
+
+def _draw_overview_orbit_map(draw, planets, active_planet_id, box, fonts):
+    x1, y1, x2, y2 = box
+    draw.rectangle(box, outline=(38, 38, 38))
+    cx = (x1 + x2) // 2
+    cy = (y1 + y2) // 2 + 4
+    max_rx = max(170, int((x2 - x1) * 0.40))
+    max_ry = max(125, int((y2 - y1) * 0.36))
+    ring_fracs = [0.38, 0.62, 0.84]
+
+    for frac in ring_fracs:
+        rx = int(max_rx * frac)
+        ry = int(max_ry * frac)
+        draw.ellipse((cx - rx, cy - ry, cx + rx, cy + ry), outline=(48, 48, 48), width=1)
+
+    draw.line((x1 + 20, cy, x2 - 20, cy), fill=(22, 22, 22), width=1)
+    draw.line((cx, y1 + 20, cx, y2 - 20), fill=(22, 22, 22), width=1)
+    draw.ellipse((cx - 18, cy - 18, cx + 18, cy + 18), fill=(110, 110, 110), outline=(220, 220, 220), width=1)
+    draw.ellipse((cx - 30, cy - 30, cx + 30, cy + 30), outline=(62, 62, 62), width=1)
+    _overview_text(draw, (cx + 38, cy - 8), "PRIMARY NODE", fonts["mono"], (120, 120, 120), max_width=120)
+
+    if not planets:
+        _overview_text(draw, (cx - 72, cy + 48), "NO THEATRES LINKED", fonts["body"], (130, 130, 130), max_width=180)
+        return
+
+    n = len(planets)
+    for idx, planet in enumerate(planets):
+        ring_idx = idx % len(ring_fracs)
+        angle = -math.pi / 2 + (2 * math.pi * idx / max(n, 1)) + (ring_idx * 0.17)
+        rx = int(max_rx * ring_fracs[ring_idx])
+        ry = int(max_ry * ring_fracs[ring_idx])
+        px = int(cx + math.cos(angle) * rx)
+        py = int(cy + math.sin(angle) * ry)
+        is_active = _overview_value(planet, "id") == active_planet_id
+        if is_active:
+            draw.line((cx, cy, px, py), fill=(74, 74, 74), width=1)
+        _draw_overview_node(draw, px, py, planet, is_active, fonts)
+
+
+def _draw_overview_bottom_cards(draw, planets, active_planet_id, box, fonts):
+    x1, y1, x2, y2 = box
+    draw.rectangle(box, fill=(8, 8, 9), outline=(50, 50, 50))
+    _overview_text(draw, (x1 + 12, y1 + 10), "THEATRE STATUS ARRAY", fonts["mono"], (112, 112, 112), max_width=220)
+    if not planets:
+        _overview_text(draw, (x1 + 12, y1 + 42), "No planets configured.", fonts["body"], (170, 170, 170), max_width=260)
+        return
+
+    gap = 10
+    top = y1 + 32
+    card_h = y2 - top - 8
+    card_w = max(124, min(220, int((x2 - x1 - 24 - gap * (len(planets) - 1)) / max(len(planets), 1))))
+    start_x = x1 + 12
+    for idx, planet in enumerate(planets):
+        cx = start_x + idx * (card_w + gap)
+        if cx + card_w > x2 - 12:
+            break
+        active = _overview_value(planet, "id") == active_planet_id
+        fill = (20, 20, 21) if active else (12, 12, 13)
+        edge = (148, 148, 148) if active else (50, 50, 50)
+        draw.rectangle((cx, top, cx + card_w, top + card_h), fill=fill, outline=edge, width=2 if active else 1)
+        if active:
+            draw.rectangle((cx, top, cx + 4, top + card_h), fill=(184, 184, 184))
+        _overview_text(draw, (cx + 12, top + 8), _overview_value(planet, "name", "Unknown"), fonts["head"], (224, 224, 224) if active else (150, 150, 150), max_width=card_w - 24)
+        _overview_text(draw, (cx + 12, top + 31), "ACTIVE" if active else "STANDBY", fonts["mono"], (200, 200, 200) if active else (88, 88, 88), max_width=card_w - 24)
+        _overview_text(draw, (cx + 12, top + 51), f"C: {_overview_value(planet, 'contractor')}", fonts["small"], (160, 160, 160), max_width=card_w - 24)
+        _overview_text(draw, (cx + 12, top + 67), f"E: {_overview_value(planet, 'enemy_type')}", fonts["small"], (145, 145, 145), max_width=card_w - 24)
+
+
 def render_planetary_system_overview(
     planets:          list,
     active_planet_id: int,
     theme:            dict = None,
+    turn_number:      int = 0,
 ) -> io.BytesIO:
     if theme is None:
         theme = _default_theme()
 
-    N    = max(len(planets), 1)
-    W    = max(1200, N * 220)
-    H    = 360
-    TBAR = 46
-    img  = Image.new("RGB", (W, H), (10,10,10))
+    planets = planets or []
+    active_planet = next((p for p in planets if _overview_value(p, "id") == active_planet_id), None)
+    if active_planet is None and planets:
+        active_planet = planets[0]
+
+    N = max(len(planets), 1)
+    W = max(1280, min(1880, 1080 + N * 95))
+    H = 760
+    img = Image.new("RGB", (W, H), (5, 6, 7))
     draw = ImageDraw.Draw(img)
 
-    f_title = _font(_SERIF,   18)
-    f_name  = _font(_SANS,    13)
-    f_sub   = _font(_SANSREG, 10)
-    f_tiny  = _font(_MONO,     8)
+    fonts = {
+        "title": _font(_SERIF, 22),
+        "head": _font(_SANS, 16),
+        "body": _font(_SANSREG, 12),
+        "small": _font(_SANSREG, 10),
+        "mono": _font(_MONO, 9),
+    }
 
-    draw.rectangle((0,0,W,TBAR), fill=(16,16,16))
-    draw.line((28,TBAR-2,W-28,TBAR-2), fill=(65,65,65), width=1)
-    try:
-        tt = f"{theme.get('bot_name','WARBOT')}  |  Interplanetary Theatre Overview"
-        bb = draw.textbbox((0,0), tt, font=f_title)
-        tw,th = bb[2]-bb[0],bb[3]-bb[1]
-        draw.text(((W-tw)//2,(TBAR-th)//2), tt, font=f_title, fill=(205,205,205))
-    except Exception:
-        pass
+    _draw_overview_starfield(draw, W, H, seed=active_planet_id or N)
+    _draw_overview_top_bar(draw, W, theme, active_planet, turn_number, fonts)
 
-    col_w     = W // N
-    content_h = H - TBAR
+    top = 70
+    bottom_cards_h = 158
+    left_panel = (28, top, 318, H - bottom_cards_h - 24)
+    orbit_bounds = (350, top, W - 28, H - bottom_cards_h - 24)
 
-    for i, planet in enumerate(planets):
-        cx        = col_w*i + col_w//2
-        cy        = TBAR + content_h//2 + 8
-        is_active = (planet.get("id") == active_planet_id)
-        R         = 95 if is_active else 46
+    _draw_overview_active_panel(draw, left_panel, active_planet, fonts)
+    _draw_overview_orbit_map(draw, planets, active_planet_id, orbit_bounds, fonts)
+    _draw_overview_bottom_cards(draw, planets, active_planet_id, (28, H - bottom_cards_h + 8, W - 28, H - 24), fonts)
 
-        for g in range(14 if is_active else 6, 0, -1):
-            lum = int(28 * g / (14 if is_active else 6))
-            try:
-                draw.ellipse((cx-R-g,cy-R-g,cx+R+g,cy+R+g), outline=(lum,lum,lum+10), width=1)
-            except Exception:
-                pass
-
-        for band in range(R, 0, -7 if is_active else -5):
-            g = 50 + int((R-band)/R*(85 if is_active else 50))
-            draw.ellipse((cx-band,cy-band,cx+band,cy+band), fill=(g,g,g))
-
-        if is_active:
-            for lat in range(-4, 5):
-                y_off = lat*(R//5)
-                if abs(y_off) >= R: continue
-                hw  = int(math.sqrt(max(0, R*R-y_off*y_off)))
-                lum = 72 + abs(lat)*6
-                draw.line((cx-hw,cy+y_off,cx+hw,cy+y_off), fill=(lum,lum,lum), width=1)
-
-        ry = 11 if is_active else 5
-        rw = 20 if is_active else 10
-        rc = (140,140,140) if is_active else (60,60,60)
-        draw.ellipse((cx-R-rw,cy-ry,cx+R+rw,cy+ry), outline=rc, width=2)
-        draw.ellipse((cx-R-rw,cy-ry,cx+R+rw,cy+ry), outline=(10,10,10), width=6)
-        draw.ellipse((cx-R-rw+4,cy-ry+3,cx+R+rw-4,cy+ry-3), outline=rc, width=1)
-
-        try:
-            badge = "* ACTIVE THEATRE" if is_active else "- STANDBY"
-            col   = (110,210,110) if is_active else (80,80,80)
-            bb    = draw.textbbox((0,0), badge, font=f_sub)
-            bw    = bb[2]-bb[0]
-            draw.text((cx-bw//2, cy-R-22), badge, font=f_sub, fill=col)
-        except Exception:
-            pass
-
-        try:
-            bb  = draw.textbbox((0,0), planet["name"], font=f_name)
-            nw  = bb[2]-bb[0]
-            col = (218,218,218) if is_active else (95,95,95)
-            draw.text((cx-nw//2, cy+R+10), planet["name"], font=f_name, fill=col)
-        except Exception:
-            pass
-
-        for j, sub in enumerate([
-            f"Contract: {planet.get('contractor','---')}",
-            f"Enemy: {planet.get('enemy_type','---')}",
-        ]):
-            try:
-                bb  = draw.textbbox((0,0), sub, font=f_tiny)
-                sw  = bb[2]-bb[0]
-                col = (155,155,155) if is_active else (60,60,60)
-                draw.text((cx-sw//2, cy+R+28+j*13), sub, font=f_tiny, fill=col)
-            except Exception:
-                pass
-
-        if i < N-1:
-            draw.line((col_w*(i+1),TBAR+8,col_w*(i+1),H-8), fill=(36,36,36), width=1)
-
-    draw.rectangle((1,1,W-2,H-2), outline=(55,55,55), width=2)
+    draw.rectangle((1, 1, W - 2, H - 2), outline=(64, 64, 64), width=2)
+    draw.rectangle((7, 7, W - 8, H - 8), outline=(24, 24, 24), width=1)
     buf = io.BytesIO()
     img.save(buf, format="PNG", optimize=True)
     buf.seek(0)
@@ -948,9 +1258,9 @@ def render_movement_map(
             label_cy = label_pos["coord_y"]
             lx2 = label_pos["coord_x"] if label_pos["cornered"] else cx - lw2
             ly2 = label_cy-lh2
-            light_tile = terrain in ("plains", "city", "hills", "forest")
-            shadow = (255,255,255,32) if not light_tile else (0,0,0,24)
-            fill = (28, 28, 28, 92) if light_tile else (235, 240, 235, 96)
+            light_tile = terrain in ("plains", "city", "hills", "forest", "fort")
+            shadow = (255,255,255,24) if not light_tile else (0,0,0,18)
+            fill = (26, 26, 26, 78) if light_tile else (225, 225, 225, 84)
             draw.text((lx2+1, ly2+1), lbl, font=f_coord, fill=shadow)
             draw.text((lx2, ly2), lbl, font=f_coord, fill=fill)
         except Exception:
@@ -1376,7 +1686,23 @@ async def render_overview_for_guild(guild_id: int, conn) -> io.BytesIO:
     planets   = await conn.fetch(
         "SELECT id, name, contractor, enemy_type FROM planets "
         "WHERE guild_id=$1 ORDER BY sort_order, id", guild_id)
-    return render_planetary_system_overview([dict(p) for p in planets], active_id, theme)
+    turn_count = await conn.fetchval(
+        "SELECT COUNT(*) FROM turn_history WHERE guild_id=$1", guild_id) or 0
+    player_counts = await conn.fetch(
+        "SELECT planet_id, COUNT(*) AS count FROM squadrons "
+        "WHERE guild_id=$1 AND is_active=TRUE GROUP BY planet_id", guild_id)
+    enemy_counts = await conn.fetch(
+        "SELECT planet_id, COUNT(*) AS count FROM enemy_units "
+        "WHERE guild_id=$1 AND is_active=TRUE GROUP BY planet_id", guild_id)
+    players_by_planet = {row["planet_id"]: row["count"] for row in player_counts}
+    enemies_by_planet = {row["planet_id"]: row["count"] for row in enemy_counts}
+    overview_planets = []
+    for planet in planets:
+        item = dict(planet)
+        item["player_units"] = int(players_by_planet.get(item["id"], 0) or 0)
+        item["enemy_units"] = int(enemies_by_planet.get(item["id"], 0) or 0)
+        overview_planets.append(item)
+    return render_planetary_system_overview(overview_planets, active_id, theme, int(turn_count) + 1)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
