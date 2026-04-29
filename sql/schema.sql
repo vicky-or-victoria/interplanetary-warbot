@@ -144,6 +144,17 @@ CREATE TABLE IF NOT EXISTS turn_history (
     resolved_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS turn_report_messages (
+    message_id     BIGINT      PRIMARY KEY,
+    guild_id       BIGINT      NOT NULL,
+    planet_id      INT         NOT NULL DEFAULT 1,
+    turn_number    INT         NOT NULL,
+    planet_name    TEXT        NOT NULL DEFAULT 'Unknown',
+    summaries_json TEXT        NOT NULL DEFAULT '[]',
+    theme_json     TEXT        NOT NULL DEFAULT '{}',
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS player_economy (
     id            SERIAL PRIMARY KEY,
     guild_id      BIGINT NOT NULL,
@@ -206,6 +217,7 @@ CREATE INDEX IF NOT EXISTS idx_hexes_gp    ON hexes(guild_id, planet_id);
 CREATE INDEX IF NOT EXISTS idx_sq_gp       ON squadrons(guild_id, planet_id);
 CREATE INDEX IF NOT EXISTS idx_enemy_gp    ON enemy_units(guild_id, planet_id);
 CREATE INDEX IF NOT EXISTS idx_combat_g    ON combat_log(guild_id);
+CREATE INDEX IF NOT EXISTS idx_reports_gp  ON turn_report_messages(guild_id, planet_id);
 CREATE INDEX IF NOT EXISTS idx_planets_g   ON planets(guild_id);
 CREATE INDEX IF NOT EXISTS idx_terrain_gp  ON hex_terrain(guild_id, planet_id);
 CREATE INDEX IF NOT EXISTS idx_profiles_g  ON commander_profiles(guild_id);
