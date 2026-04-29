@@ -258,6 +258,42 @@ EXCEPTION WHEN undefined_column THEN NULL; END $$;
 DO $$ BEGIN ALTER TABLE squadrons    ADD COLUMN IF NOT EXISTS hp                    INT    NOT NULL DEFAULT 100; END $$;
 DO $$ BEGIN ALTER TABLE enemy_units  ADD COLUMN IF NOT EXISTS hp                    INT    NOT NULL DEFAULT 100; END $$;
 DO $$ BEGIN ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS contract_name         TEXT   DEFAULT NULL; END $$;
+DO $$ BEGIN ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS operational_tempo     INT    NOT NULL DEFAULT 0; END $$;
+DO $$ BEGIN ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS tempo_threshold       INT    NOT NULL DEFAULT 500; END $$;
+DO $$ BEGIN ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS fleet_pool_available  INT    NOT NULL DEFAULT 1; END $$;
+
+CREATE TABLE IF NOT EXISTS contracts (
+    id                    SERIAL PRIMARY KEY,
+    guild_id              BIGINT NOT NULL,
+    title                 TEXT NOT NULL,
+    planet_system         TEXT NOT NULL,
+    enemy                 TEXT NOT NULL,
+    difficulty            TEXT NOT NULL DEFAULT 'standard',
+    description           TEXT DEFAULT NULL,
+    status                TEXT NOT NULL DEFAULT 'draft',
+    fleet_count           INT  NOT NULL DEFAULT 0,
+    deployment_capacity   INT  NOT NULL DEFAULT 0,
+    accepted_players      BIGINT[] NOT NULL DEFAULT '{}',
+    deployed_units        INT  NOT NULL DEFAULT 0,
+    tactical_map_id       TEXT DEFAULT NULL,
+    created_by_gm         BIGINT DEFAULT NULL,
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS contract_acceptances (
+    guild_id BIGINT NOT NULL,
+    contract_id INT NOT NULL,
+    player_id BIGINT NOT NULL,
+    accepted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (guild_id, contract_id, player_id)
+);
+
+CREATE TABLE IF NOT EXISTS unit_contract_map (
+    guild_id BIGINT NOT NULL,
+    squadron_id INT NOT NULL,
+    contract_id INT NOT NULL,
+    PRIMARY KEY (guild_id, squadron_id)
+);
 DO $$ BEGIN ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS announcement_channel_id BIGINT DEFAULT NULL; END $$;
 DO $$ BEGIN ALTER TABLE commander_profiles ADD COLUMN IF NOT EXISTS selected_banner_key TEXT DEFAULT NULL; END $$;
 DO $$ BEGIN ALTER TABLE commander_profiles ADD COLUMN IF NOT EXISTS recovery_status TEXT DEFAULT NULL; END $$;
