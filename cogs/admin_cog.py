@@ -193,6 +193,12 @@ class AdminPanelView(discord.ui.View):
             await i.response.send_message("Admins only.", ephemeral=True); return
         await i.response.send_modal(_TurnIntervalModal())
 
+    @discord.ui.button(label="ðŸ§­ Contract Board Setup", style=discord.ButtonStyle.primary, row=0)
+    async def contract_board_setup(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await _is_admin(self.bot, i):
+            await i.response.send_message("Admins only.", ephemeral=True); return
+        await i.response.send_modal(_ContractBoardSetupModal())
+
     # â”€â”€ Row 1: Planets â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     @discord.ui.button(label="ðŸª List Planets", style=discord.ButtonStyle.secondary, row=1)
@@ -675,6 +681,7 @@ class AdminPanelPagerView(_PagedPanelView):
                 "items": [
                     {"label": "Status", "method": "game_status"},
                     {"label": "Turn Interval", "method": "set_turn_interval"},
+                    {"label": "Contract Board Setup", "method": "contract_board_setup", "style": discord.ButtonStyle.primary},
                     {"label": "Force Turn", "method": "force_turn", "style": discord.ButtonStyle.danger},
                     {"label": "Reset War", "method": "game_reset", "style": discord.ButtonStyle.danger},
                 ],
@@ -1287,6 +1294,36 @@ class _RoleModal(discord.ui.Modal, title="Set Role"):
         await i.response.send_message(f"Set to {role.mention}.", ephemeral=True)
 
 
+class _ContractBoardSetupModal(discord.ui.Modal, title="Contract Board Setup"):
+    fleets_available = discord.ui.TextInput(label="Starting Fleets Available", placeholder="e.g. 3", max_length=4, required=False)
+    operational_tempo = discord.ui.TextInput(label="Operational Tempo", placeholder="e.g. 320", max_length=6, required=False)
+    tempo_threshold = discord.ui.TextInput(label="Tempo Threshold", placeholder="e.g. 500", max_length=6, required=False)
+
+    async def on_submit(self, i: discord.Interaction):
+        def _to_int(v, d):
+            t = str(v).strip()
+            if not t:
+                return d
+            try:
+                return int(t)
+            except ValueError:
+                return d
+        fleets = max(0, _to_int(self.fleets_available, 1))
+        tempo = max(0, _to_int(self.operational_tempo, 0))
+        threshold = max(1, _to_int(self.tempo_threshold, 500))
+        await ensure_guild(i.guild_id)
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE guild_config SET fleet_pool_available=$1, operational_tempo=$2, tempo_threshold=$3 WHERE guild_id=$4",
+                fleets, tempo, threshold, i.guild_id,
+            )
+        await i.response.send_message(
+            f"Contract board settings updated. Fleets={fleets}, Operational Tempo={tempo}/{threshold}.",
+            ephemeral=True,
+        )
+
+
 # GM Modals
 class _StartContractModal(discord.ui.Modal, title="Start Contract"):
     contract_name = discord.ui.TextInput(
@@ -1411,6 +1448,8 @@ class _ContractOutcomeModal(discord.ui.Modal, title="Conclude Contract"):
                 "SELECT announcement_channel_id, contract_name FROM guild_config WHERE guild_id=$1",
                 i.guild_id)
             planet_id = await get_active_planet_id(conn, i.guild_id)
+            tempo_gain = random.randint(100, 200) if success else random.randint(25, 50)
+            tempo_result = await add_operational_tempo(conn, i.guild_id, tempo_gain)
             # Pause the game and move deployed player units back to their persistent roster.
             latest_contract = await conn.fetchrow("SELECT id, fleet_count FROM contracts WHERE guild_id=$1 ORDER BY id DESC LIMIT 1", i.guild_id)
             if latest_contract:

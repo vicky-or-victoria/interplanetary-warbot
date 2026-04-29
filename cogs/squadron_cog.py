@@ -1281,3 +1281,4 @@ async def setup(bot):
     await bot.add_cog(SquadronCog(bot))
     from views.menu import EnlistView
     bot.add_view(EnlistView(guild_id=0))
+
