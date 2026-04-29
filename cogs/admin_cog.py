@@ -18,6 +18,7 @@ from utils.hexmap import ensure_hexes, is_valid, GRID_COORDS, hex_key
 from utils.map_render import TERRAIN_TYPES, generate_biome_terrain_map
 from utils.brigades import BRIGADES
 from utils.profiles import cosmetic_key, ensure_commander_profile, grant_default_banner
+from utils.operational_tempo import add_operational_tempo, capacity_for_fleets, TRANSMISSION_VARIANTS
 
 
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -132,7 +133,7 @@ class AdminPanelView(discord.ui.View):
         async with pool.acquire() as conn:
             theme     = await get_theme(conn, i.guild_id)
             cfg       = await conn.fetchrow(
-                "SELECT * FROM guild_config WHERE guild_id=$1", i.guild_id)
+                "SELECT *, operational_tempo, tempo_threshold, fleet_pool_available FROM guild_config WHERE guild_id=$1", i.guild_id)
             planet_id = await get_active_planet_id(conn, i.guild_id)
             planet    = await conn.fetchrow(
                 "SELECT name, contractor, enemy_type FROM planets WHERE guild_id=$1 AND id=$2",
@@ -159,6 +160,8 @@ class AdminPanelView(discord.ui.View):
         embed.add_field(name="Enemy",    value=planet["enemy_type"] if planet else "â€”", inline=True)
         embed.add_field(name=theme.get("player_faction","PMC"),  value=f"{p_count} units", inline=True)
         embed.add_field(name=theme.get("enemy_faction","Enemy"), value=f"{e_count} units", inline=True)
+        embed.add_field(name="Fleets Available", value=str(cfg.get('fleet_pool_available',1) if hasattr(cfg,'get') else cfg['fleet_pool_available']), inline=True)
+        embed.add_field(name="Operational Tempo", value=f"{cfg['operational_tempo']}/{cfg['tempo_threshold']}", inline=True)
         embed.set_footer(text=f"Last advance: {cfg['last_turn_at'].strftime('%Y-%m-%d %H:%M UTC')}")
         await i.response.send_message(embed=embed, ephemeral=True)
 
@@ -167,6 +170,12 @@ class AdminPanelView(discord.ui.View):
         if not await _is_admin(self.bot, i):
             await i.response.send_message("Admins only.", ephemeral=True); return
         await i.response.send_modal(_TurnIntervalModal())
+
+    @discord.ui.button(label="ðŸ§­ Contract Board Setup", style=discord.ButtonStyle.primary, row=0)
+    async def contract_board_setup(self, i: discord.Interaction, b: discord.ui.Button):
+        if not await _is_admin(self.bot, i):
+            await i.response.send_message("Admins only.", ephemeral=True); return
+        await i.response.send_modal(_ContractBoardSetupModal())
 
     # â”€â”€ Row 1: Planets â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -648,6 +657,7 @@ class AdminPanelPagerView(_PagedPanelView):
                 "items": [
                     {"label": "Status", "method": "game_status"},
                     {"label": "Turn Interval", "method": "set_turn_interval"},
+                    {"label": "Contract Board Setup", "method": "contract_board_setup", "style": discord.ButtonStyle.primary},
                     {"label": "Force Turn", "method": "force_turn", "style": discord.ButtonStyle.danger},
                     {"label": "Reset War", "method": "game_reset", "style": discord.ButtonStyle.danger},
                 ],
@@ -1259,6 +1269,36 @@ class _RoleModal(discord.ui.Modal, title="Set Role"):
         await i.response.send_message(f"Set to {role.mention}.", ephemeral=True)
 
 
+class _ContractBoardSetupModal(discord.ui.Modal, title="Contract Board Setup"):
+    fleets_available = discord.ui.TextInput(label="Starting Fleets Available", placeholder="e.g. 3", max_length=4, required=False)
+    operational_tempo = discord.ui.TextInput(label="Operational Tempo", placeholder="e.g. 320", max_length=6, required=False)
+    tempo_threshold = discord.ui.TextInput(label="Tempo Threshold", placeholder="e.g. 500", max_length=6, required=False)
+
+    async def on_submit(self, i: discord.Interaction):
+        def _to_int(v, d):
+            t = str(v).strip()
+            if not t:
+                return d
+            try:
+                return int(t)
+            except ValueError:
+                return d
+        fleets = max(0, _to_int(self.fleets_available, 1))
+        tempo = max(0, _to_int(self.operational_tempo, 0))
+        threshold = max(1, _to_int(self.tempo_threshold, 500))
+        await ensure_guild(i.guild_id)
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE guild_config SET fleet_pool_available=$1, operational_tempo=$2, tempo_threshold=$3 WHERE guild_id=$4",
+                fleets, tempo, threshold, i.guild_id,
+            )
+        await i.response.send_message(
+            f"Contract board settings updated. Fleets={fleets}, Operational Tempo={tempo}/{threshold}.",
+            ephemeral=True,
+        )
+
+
 # GM Modals
 class _StartContractModal(discord.ui.Modal, title="Start Contract"):
     contract_name = discord.ui.TextInput(
@@ -1314,9 +1354,16 @@ class _StartContractModal(discord.ui.Modal, title="Start Contract"):
                 "UPDATE hexes SET controller='neutral', status='neutral' "
                 "WHERE guild_id=$1 AND planet_id=$2",
                 i.guild_id, planet_id)
+            available_fleets = await conn.fetchval("SELECT fleet_pool_available FROM guild_config WHERE guild_id=$1", i.guild_id) or 0
+            assigned_fleets = 1 if available_fleets > 0 else 0
             await conn.execute(
-                "UPDATE guild_config SET game_started=TRUE, contract_name=$1 WHERE guild_id=$2",
-                name, i.guild_id)
+                "UPDATE guild_config SET game_started=TRUE, contract_name=$1, fleet_pool_available=GREATEST(fleet_pool_available-$2,0) WHERE guild_id=$3",
+                name, assigned_fleets, i.guild_id)
+            await conn.execute(
+                "INSERT INTO contracts (guild_id,title,planet_system,enemy,difficulty,description,status,fleet_count,deployment_capacity,created_by_gm) VALUES ($1,$2,$3,$4,'standard',$5,$6,$7,$8,$9)",
+                i.guild_id, name, (planet['name'] if planet else 'Unknown'), (planet['enemy_type'] if planet else 'Unknown'), desc,
+                ('deployable' if assigned_fleets>0 else 'locked'), assigned_fleets, capacity_for_fleets(assigned_fleets), i.user.id
+            )
             theme = await get_theme(conn, i.guild_id)
             # Post to announcement channel if set
             cfg = await conn.fetchrow(
@@ -1334,7 +1381,9 @@ class _StartContractModal(discord.ui.Modal, title="Start Contract"):
                         f"**Planet:** {planet['name'] if planet else 'â€”'}\n"
                         f"**Contractor:** {planet['contractor'] if planet else 'â€”'}\n"
                         f"**Enemy:** {planet['enemy_type'] if planet else 'â€”'}\n\n"
-                        f"*Commandants may now enlist or deploy. Good luck.*"
+                        f"**Fleets Assigned:** {assigned_fleets}\n"
+                        f"**Deployment Capacity:** {capacity_for_fleets(assigned_fleets)} units\n\n"
+                        f"*Commandants may now enlist or deploy if capacity permits. Good luck.*"
                     ),
                 )
                 embed.set_footer(text=theme.get("flavor_text", "The contract must be fulfilled."))
@@ -1373,7 +1422,13 @@ class _ContractOutcomeModal(discord.ui.Modal, title="Conclude Contract"):
                 "SELECT announcement_channel_id, contract_name FROM guild_config WHERE guild_id=$1",
                 i.guild_id)
             planet_id = await get_active_planet_id(conn, i.guild_id)
+            tempo_gain = random.randint(100, 200) if success else random.randint(25, 50)
+            tempo_result = await add_operational_tempo(conn, i.guild_id, tempo_gain)
             # Pause the game and move deployed player units back to their persistent roster.
+            latest_contract = await conn.fetchrow("SELECT id, fleet_count FROM contracts WHERE guild_id=$1 ORDER BY id DESC LIMIT 1", i.guild_id)
+            if latest_contract:
+                await conn.execute("UPDATE guild_config SET fleet_pool_available=fleet_pool_available+$1 WHERE guild_id=$2", latest_contract['fleet_count'] or 0, i.guild_id)
+                await conn.execute("UPDATE contracts SET status=$1 WHERE id=$2", 'concluded_success' if success else 'concluded_failure', latest_contract['id'])
             await conn.execute(
                 "UPDATE guild_config SET game_started=FALSE WHERE guild_id=$1", i.guild_id)
             await conn.execute("""
@@ -1396,7 +1451,7 @@ class _ContractOutcomeModal(discord.ui.Modal, title="Conclude Contract"):
                 embed = discord.Embed(
                     title=f"{icon} {label} â€” {contract_name}",
                     color=0x22AA44 if success else 0xAA2222,
-                    description=desc,
+                    description=desc + f"\n\nOperational Tempo +{tempo_gain} -> {tempo_result['tempo']}/{tempo_result['threshold']}",
                 )
                 embed.set_footer(text=theme.get("flavor_text", "The contract must be fulfilled."))
                 await channel.send(embed=embed)
