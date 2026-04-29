@@ -15,6 +15,7 @@ Each turn:
 """
 
 import asyncio
+import json
 import logging
 import random
 from datetime import datetime, timezone
@@ -173,6 +174,17 @@ def _report_loss_counts(sections: dict, theme: dict) -> tuple:
     return player_losses, enemy_losses
 
 
+def _signal_integrity_status(sections: dict, total_events: int) -> str:
+    supply_events = len(sections.get("supply", []))
+    casualty_events = len(sections.get("casualties", []))
+    combat_events = len(sections.get("combat", []))
+    if casualty_events >= 5 or supply_events >= 5:
+        return "critical"
+    if total_events >= 18 or combat_events >= 4 or casualty_events >= 3 or supply_events >= 3:
+        return "strained"
+    return "stable"
+
+
 def _append_report_field(embeds, name: str, value: str, color: int):
     current = embeds[-1]
     projected = len(current.title or "") + len(current.description or "") + len(name) + len(value)
@@ -201,13 +213,14 @@ def _build_turn_report_embeds(planet_name: str, turn_num: int, summaries: list, 
     supply_events = len(sections.get("supply", []))
     player_losses, enemy_losses = _report_loss_counts(sections, theme)
 
+    signal = _signal_integrity_status(sections, total_events)
     description = (
         f"**Contract Theatre:** {planet_name}\n"
         f"**Turn:** {turn_num}\n"
         f"**Events:** {total_events} total | {movement_events} movement | "
         f"{combat_events} combat | {casualty_events} casualty | {supply_events} supply\n"
         f"**Losses:** {player_losses} friendly | {enemy_losses} hostile\n"
-        f"**Signal Integrity:** stable"
+        f"**Signal Integrity:** {signal}"
     )
 
     embed = discord.Embed(
@@ -234,6 +247,7 @@ def _turn_report_summary_embed(planet_name: str, turn_num: int, summaries: list,
     sections = _section_report_lines(summaries)
     player_losses, enemy_losses = _report_loss_counts(sections, theme)
 
+    signal = _signal_integrity_status(sections, len(summaries))
     description = (
         f"**Contract Theatre:** {planet_name}\n"
         f"**Turn:** {turn_num}\n"
@@ -242,7 +256,7 @@ def _turn_report_summary_embed(planet_name: str, turn_num: int, summaries: list,
         f"{len(sections.get('casualties', []))} casualty | "
         f"{len(sections.get('supply', []))} supply\n"
         f"**Losses:** {player_losses} friendly | {enemy_losses} hostile\n"
-        f"**Signal Integrity:** stable"
+        f"**Signal Integrity:** {signal}"
     )
     embed = discord.Embed(
         title=f"{bot_name} | Turn {turn_num} After Action Report",
@@ -287,33 +301,62 @@ def _build_report_detail_embeds(
 
 
 class TurnReportView(discord.ui.View):
-    def __init__(self, planet_name: str, turn_num: int, summaries: list, theme: dict):
-        super().__init__(timeout=604800)
+    def __init__(self, planet_name: str = None, turn_num: int = None,
+                 summaries: list = None, theme: dict = None):
+        super().__init__(timeout=None)
         self.planet_name = planet_name
         self.turn_num = turn_num
-        self.summaries = list(summaries)
-        self.theme = dict(theme)
+        self.summaries = list(summaries or [])
+        self.theme = dict(theme or {})
+
+    async def _load_report(self, interaction: discord.Interaction):
+        if self.planet_name and self.turn_num is not None:
+            return self.planet_name, self.turn_num, self.summaries, self.theme
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT planet_name, turn_number, summaries_json, theme_json "
+                "FROM turn_report_messages WHERE message_id=$1",
+                interaction.message.id if interaction.message else 0)
+        if not row:
+            return None
+        return (
+            row["planet_name"],
+            row["turn_number"],
+            json.loads(row["summaries_json"] or "[]"),
+            json.loads(row["theme_json"] or "{}"),
+        )
 
     async def _send_detail(self, interaction: discord.Interaction, title: str, section_keys: list):
+        loaded = await self._load_report(interaction)
+        if not loaded:
+            await interaction.response.send_message(
+                "This report predates the persistent archive and can no longer be expanded.",
+                ephemeral=True)
+            return
+        planet_name, turn_num, summaries, theme = loaded
         embeds = _build_report_detail_embeds(
-            self.planet_name,
-            self.turn_num,
-            self.summaries,
-            self.theme,
+            planet_name,
+            turn_num,
+            summaries,
+            theme,
             title,
             section_keys,
         )
         await interaction.response.send_message(embeds=embeds[:10], ephemeral=True)
 
-    @discord.ui.button(label="Movement", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="Movement", style=discord.ButtonStyle.primary,
+                       custom_id="turn_report_movement")
     async def movement(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._send_detail(interaction, "Movement Report", ["movement"])
 
-    @discord.ui.button(label="Combat", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="Combat", style=discord.ButtonStyle.danger,
+                       custom_id="turn_report_combat")
     async def combat(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._send_detail(interaction, "Combat Report", ["combat", "casualties", "territory", "other"])
 
-    @discord.ui.button(label="Supply", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Supply", style=discord.ButtonStyle.secondary,
+                       custom_id="turn_report_supply")
     async def supply(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._send_detail(interaction, "Supply Report", ["supply"])
 
@@ -406,6 +449,13 @@ class TurnEngine:
             await auto_update_map(self.bot, guild_id, movement_arrows=movement_arrows)
         except Exception as e:
             log.warning(f"auto_update_map: {e}")
+        try:
+            from views.menu import refresh_public_panels
+            pool = await get_pool()
+            async with pool.acquire() as live_conn:
+                await refresh_public_panels(self.bot, guild_id, live_conn)
+        except Exception as e:
+            log.warning(f"public panel refresh: {e}")
 
         # Clear persisted player movement arrows — new turn = blank slate
         try:
@@ -628,9 +678,16 @@ class TurnEngine:
 
                 # ── Apply HP damage to player units ───────────────────────────
                 if result.attacker_damage > 0:
-                    for pu in p_units:
+                    active_stack = [pu for pu in p_units if p_hp_map.get(pu["id"], 0) > 0]
+                    stack_size = max(1, len(active_stack))
+                    base_damage = result.attacker_damage // stack_size
+                    remainder = result.attacker_damage % stack_size
+                    for idx, pu in enumerate(active_stack):
+                        assigned_damage = base_damage + (1 if idx < remainder else 0)
+                        if assigned_damage <= 0:
+                            continue
                         cur_hp = p_hp_map[pu["id"]]
-                        new_hp = max(0, cur_hp - result.attacker_damage)
+                        new_hp = max(0, cur_hp - assigned_damage)
                         p_hp_map[pu["id"]] = new_hp
                         # Recalculate avg for next round
                         avg_player_hp = sum(p_hp_map.values()) // max(1, len(p_hp_map))
@@ -649,7 +706,7 @@ class TurnEngine:
                                 new_hp, pu["id"])
                             summaries.append(
                                 f"💔 **{pu['owner_name']}'s {pu['name']}** took "
-                                f"**{result.attacker_damage} damage** (`{new_hp} HP` remaining).")
+                                f"**{assigned_damage} stack damage** (`{new_hp} HP` remaining).")
 
                 # Determine hex control and routing.
                 # Routing triggers only when the winning roll beats the losing roll by 10+.
@@ -784,7 +841,23 @@ class TurnEngine:
                     break
         if not channel:
             return
-        await channel.send(
+        msg = await channel.send(
             embed=_turn_report_summary_embed(planet_name, turn_num, summaries, theme),
             view=TurnReportView(planet_name, turn_num, summaries, theme),
         )
+        try:
+            async with pool.acquire() as conn:
+                planet_id = await get_active_planet_id(conn, guild_id)
+                await conn.execute("""
+                    INSERT INTO turn_report_messages
+                      (guild_id, planet_id, turn_number, message_id, planet_name,
+                       summaries_json, theme_json)
+                    VALUES ($1,$2,$3,$4,$5,$6,$7)
+                    ON CONFLICT (message_id) DO UPDATE SET
+                      summaries_json=EXCLUDED.summaries_json,
+                      theme_json=EXCLUDED.theme_json
+                """,
+                    guild_id, planet_id, turn_num, msg.id, planet_name,
+                    json.dumps(summaries), json.dumps(theme))
+        except Exception as e:
+            log.warning(f"turn report archive failed: {e}")
