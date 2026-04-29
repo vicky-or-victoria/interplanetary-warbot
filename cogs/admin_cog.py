@@ -1221,8 +1221,8 @@ class _EnlistChannelModal(discord.ui.Modal, title="Set Enlist Channel"):
                 i.guild_id, planet_id)
             count     = await conn.fetchval(
                 "SELECT COUNT(DISTINCT owner_id) FROM squadrons "
-                "WHERE guild_id=$1 AND planet_id=$2 AND is_active=TRUE",
-                i.guild_id, planet_id) or 0
+                "WHERE guild_id=$1",
+                i.guild_id) or 0
             from views.menu import build_enlist_embed, EnlistView
             embed = build_enlist_embed(
                 theme,
@@ -1298,11 +1298,26 @@ class _StartContractModal(discord.ui.Modal, title="Start Contract"):
                 "SELECT name, contractor, enemy_type FROM planets WHERE guild_id=$1 AND id=$2",
                 i.guild_id, planet_id)
             await ensure_hexes(i.guild_id, conn, planet_id)
-            for tbl in ("squadrons", "enemy_units", "combat_log",
+            for tbl in ("enemy_units", "combat_log",
                         "turn_history", "enemy_gm_moves", "movement_arrows"):
                 await conn.execute(
                     f"DELETE FROM {tbl} WHERE guild_id=$1 AND planet_id=$2",
                     i.guild_id, planet_id)
+            await conn.execute("""
+                UPDATE squadrons
+                SET is_active=FALSE,
+                    in_transit=FALSE,
+                    transit_destination=NULL,
+                    transit_turns_left=0,
+                    is_dug_in=FALSE,
+                    artillery_armed=FALSE,
+                    hexes_moved_this_turn=0
+                WHERE guild_id=$1 AND planet_id=$2
+            """, i.guild_id, planet_id)
+            await conn.execute(
+                "UPDATE commander_profiles SET recovery_status=NULL, updated_at=NOW() "
+                "WHERE guild_id=$1",
+                i.guild_id)
             await conn.execute(
                 "UPDATE hexes SET controller='neutral', status='neutral' "
                 "WHERE guild_id=$1 AND planet_id=$2",
@@ -1365,9 +1380,21 @@ class _ContractOutcomeModal(discord.ui.Modal, title="Conclude Contract"):
             cfg    = await conn.fetchrow(
                 "SELECT announcement_channel_id, contract_name FROM guild_config WHERE guild_id=$1",
                 i.guild_id)
-            # Pause the game
+            planet_id = await get_active_planet_id(conn, i.guild_id)
+            # Pause the game and move deployed player units back to their persistent roster.
             await conn.execute(
                 "UPDATE guild_config SET game_started=FALSE WHERE guild_id=$1", i.guild_id)
+            await conn.execute("""
+                UPDATE squadrons
+                SET is_active=FALSE,
+                    in_transit=FALSE,
+                    transit_destination=NULL,
+                    transit_turns_left=0,
+                    is_dug_in=FALSE,
+                    artillery_armed=FALSE,
+                    hexes_moved_this_turn=0
+                WHERE guild_id=$1 AND planet_id=$2
+            """, i.guild_id, planet_id)
         contract_name = (cfg["contract_name"] if cfg and cfg["contract_name"] else "Contract")
         await i.response.send_message(
             f"{icon} **{label}** posted to announcement channel.", ephemeral=True)
