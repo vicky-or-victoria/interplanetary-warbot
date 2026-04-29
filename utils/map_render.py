@@ -250,14 +250,14 @@ TERRAIN_ALIASES = {
 }
 
 TERRAIN_DEFS = {
-    "plains":   {"color": (220, 210, 180), "label": "Plains"},
-    "forest":   {"color": (120, 160, 120), "label": "Forest"},
-    "hills":    {"color": (170, 140, 100), "label": "Hills"},
-    "mountain": {"color": (100, 100, 100), "label": "Mountain"},
-    "city":     {"color": (160, 170, 180), "label": "City"},
-    "fort":     {"color": (130, 140, 160), "label": "Fort"},
-    "military": {"color": (110, 130, 100), "label": "Military"},
-    "water":    {"color": (55, 95, 125),   "label": "Water"},
+    "plains":   {"color": (232, 224, 198), "label": "Plains"},
+    "forest":   {"color": (105, 145, 105), "label": "Forest"},
+    "hills":    {"color": (150, 120, 85),  "label": "Hills"},
+    "mountain": {"color": (95, 95, 95),    "label": "Mountain"},
+    "city":     {"color": (165, 176, 185), "label": "City"},
+    "fort":     {"color": (120, 132, 155), "label": "Fort"},
+    "military": {"color": (100, 125, 90),  "label": "Military"},
+    "water":    {"color": (50, 85, 120),   "label": "Water"},
 }
 
 COASTLINE = (210, 190, 135, 255)
@@ -279,6 +279,59 @@ def _terrain_key(terrain_type):
 
 def get_neighbors(q, r):
     return [(q + dq, r + dr) for dq, dr in HEX_DIRECTIONS]
+
+
+def generate_water_bodies(grid_coords, water_ratio=0.08, body_count=3, seed=None):
+    coords = list(grid_coords)
+    coord_set = set(coords)
+    if not coords:
+        return set()
+    rng = random.Random(seed if seed is not None else len(coords) * 7919)
+    target = max(1, int(len(coords) * water_ratio))
+    edge_score = {
+        c: max(abs(c[0]), abs(c[1]), abs(c[0] + c[1]))
+        for c in coords
+    }
+    edge_candidates = sorted(coords, key=lambda c: edge_score[c], reverse=True)
+    seeds = []
+    for candidate in edge_candidates:
+        if len(seeds) >= body_count:
+            break
+        if not seeds or all(hex_distance(hex_key(*candidate), hex_key(*s)) > 5 for s in seeds):
+            seeds.append(candidate)
+    while len(seeds) < body_count:
+        seeds.append(rng.choice(edge_candidates))
+
+    water = set(seeds)
+    frontier = list(seeds)
+    while frontier and len(water) < target:
+        q, r = rng.choice(frontier)
+        neighbors = [(nq, nr) for nq, nr in get_neighbors(q, r) if (nq, nr) in coord_set]
+        weighted = []
+        for n in neighbors:
+            adjacent_water = sum((nn in water) for nn in get_neighbors(*n))
+            edge_bias = max(0, edge_score[n] - 10)
+            weight = 1 + adjacent_water * 4 + edge_bias
+            weighted.extend([n] * weight)
+        if not weighted:
+            frontier.remove((q, r))
+            continue
+        picked = rng.choice(weighted)
+        if picked not in water:
+            water.add(picked)
+            frontier.append(picked)
+        elif all(n in water for n in neighbors):
+            try:
+                frontier.remove((q, r))
+            except ValueError:
+                pass
+
+    cleaned = set()
+    for q, r in water:
+        water_neighbors = sum((n in water) for n in get_neighbors(q, r))
+        if water_neighbors > 1:
+            cleaned.add((q, r))
+    return cleaned or water
 
 
 def _shade_color(color, amount):
@@ -314,62 +367,52 @@ def _edge_points(hex_points, direction_index):
 def draw_terrain_icon(draw, center, terrain_type, size):
     terrain = _terrain_key(terrain_type)
     cx, cy = center
-    s = max(7, int(size * 0.32))
+    s = max(6, int(size * 0.24))
 
     if terrain == "forest":
-        fills = [(42, 92, 52, 210), (55, 110, 62, 210), (35, 78, 48, 210)]
-        offsets = [(-s * .30, s * .06), (0, -s * .08), (s * .30, s * .08)]
+        fills = [(35, 78, 42, 82), (42, 90, 48, 88)]
+        offsets = [(-s * .18, s * .04), (s * .18, s * .00)]
         for idx, (ox, oy) in enumerate(offsets):
             x = cx + ox
             y = cy + oy
             draw.polygon(
                 [(x, y - s * .42), (x - s * .28, y + s * .22), (x + s * .28, y + s * .22)],
                 fill=fills[idx],
-                outline=(24, 55, 34, 190),
             )
-            draw.line((x, y + s * .08, x, y + s * .34), fill=(60, 45, 30, 180), width=1)
+            draw.line((x, y + s * .08, x, y + s * .30), fill=(60, 45, 30, 70), width=1)
     elif terrain == "mountain":
         draw.polygon(
             [(cx - s * .58, cy + s * .30), (cx - s * .08, cy - s * .55), (cx + s * .22, cy + s * .30)],
-            fill=(78, 78, 78, 230),
-            outline=(45, 45, 45, 210),
+            fill=(45, 45, 45, 82),
         )
         draw.polygon(
             [(cx - s * .12, cy + s * .32), (cx + s * .36, cy - s * .46), (cx + s * .68, cy + s * .32)],
-            fill=(92, 92, 92, 230),
-            outline=(45, 45, 45, 210),
+            fill=(55, 55, 55, 78),
         )
-        draw.polygon([(cx - s * .16, cy - s * .42), (cx - s * .08, cy - s * .55), (cx, cy - s * .36)], fill=(215, 215, 205, 190))
-        draw.polygon([(cx + s * .28, cy - s * .34), (cx + s * .36, cy - s * .46), (cx + s * .44, cy - s * .30)], fill=(215, 215, 205, 190))
+        draw.polygon([(cx - s * .16, cy - s * .42), (cx - s * .08, cy - s * .55), (cx, cy - s * .36)], fill=(235, 235, 225, 70))
+        draw.polygon([(cx + s * .28, cy - s * .34), (cx + s * .36, cy - s * .46), (cx + s * .44, cy - s * .30)], fill=(235, 235, 225, 70))
     elif terrain == "hills":
-        for ox, scale in [(-s * .28, .75), (s * .18, .95)]:
-            box = (cx + ox - s * scale * .50, cy - s * .08, cx + ox + s * scale * .50, cy + s * .55)
-            draw.arc(box, start=180, end=360, fill=(95, 72, 50, 210), width=2)
+        return
     elif terrain == "city":
-        col = (92, 102, 112, 220)
-        outline = (45, 50, 56, 210)
-        draw.rectangle((cx - s * .45, cy - s * .10, cx - s * .18, cy + s * .32), fill=col, outline=outline)
-        draw.rectangle((cx - s * .12, cy - s * .34, cx + s * .14, cy + s * .32), fill=(105, 114, 124, 220), outline=outline)
-        draw.rectangle((cx + s * .20, cy - s * .02, cx + s * .48, cy + s * .32), fill=col, outline=outline)
+        col = (50, 58, 66, 92)
+        draw.rectangle((cx - s * .45, cy - s * .10, cx - s * .18, cy + s * .28), fill=col)
+        draw.rectangle((cx - s * .10, cy - s * .32, cx + s * .12, cy + s * .28), fill=(55, 64, 72, 96))
+        draw.rectangle((cx + s * .20, cy - s * .02, cx + s * .46, cy + s * .28), fill=col)
     elif terrain == "fort":
-        draw.rectangle((cx - s * .48, cy - s * .16, cx + s * .48, cy + s * .24), fill=(78, 86, 105, 220), outline=(42, 46, 58, 220))
-        for idx in range(3):
-            x = cx - s * .36 + idx * s * .36
-            draw.rectangle((x, cy - s * .34, x + s * .18, cy - s * .16), fill=(78, 86, 105, 220), outline=(42, 46, 58, 220))
+        draw.rectangle((cx - s * .42, cy - s * .12, cx + s * .42, cy + s * .18), fill=(35, 42, 55, 72))
     elif terrain == "military":
-        draw.arc((cx - s * .42, cy - s * .36, cx + s * .42, cy + s * .48), start=190, end=350, fill=(45, 65, 42, 230), width=3)
-        draw.rectangle((cx - s * .40, cy + s * .10, cx + s * .40, cy + s * .28), fill=(45, 65, 42, 230))
-        draw.line((cx - s * .28, cy + s * .28, cx + s * .28, cy + s * .28), fill=(20, 34, 20, 210), width=2)
+        draw.arc((cx - s * .38, cy - s * .32, cx + s * .38, cy + s * .40), start=195, end=345, fill=(20, 38, 20, 76), width=2)
+        draw.rectangle((cx - s * .34, cy + s * .08, cx + s * .34, cy + s * .22), fill=(20, 38, 20, 70))
     elif terrain == "water":
-        wave = (155, 195, 210, 115)
-        for oy in (-s * .16, s * .18):
+        wave = (165, 205, 220, 72)
+        for oy in (s * .02,):
             pts = [
                 (cx - s * .42, cy + oy),
                 (cx - s * .16, cy + oy - s * .10),
                 (cx + s * .10, cy + oy),
                 (cx + s * .36, cy + oy - s * .10),
             ]
-            draw.line(pts, fill=wave, width=2, joint="curve")
+            draw.line(pts, fill=wave, width=1, joint="curve")
     elif terrain == "plains":
         return
 
@@ -384,14 +427,6 @@ def draw_terrain_hex(draw, hex_points, terrain_type, center):
 
     draw.polygon(hex_points, fill=(*fill, 255))
 
-    # A single broad wash gives depth without subdividing the hex into visible facets.
-    x_vals = [p[0] for p in hex_points]
-    y_vals = [p[1] for p in hex_points]
-    x1, x2 = min(x_vals), max(x_vals)
-    y1, y2 = min(y_vals), max(y_vals)
-    draw.line((x1 + 4, y1 + 4, x2 - 4, y1 + 4), fill=(255, 255, 255, 26), width=1)
-    draw.line((x1 + 4, y2 - 4, x2 - 4, y2 - 4), fill=(0, 0, 0, 22), width=1)
-
     draw_terrain_icon(draw, center, terrain, HEX_SIZE)
     draw.polygon(hex_points, outline=(*border, 255), width=1)
 
@@ -403,8 +438,8 @@ def draw_coastline(draw, hex_points, neighbors, terrain_type):
         if _terrain_key(neighbor_terrain) != "water":
             continue
         p1, p2 = _edge_points(hex_points, idx)
-        draw.line((p1[0], p1[1], p2[0], p2[1]), fill=COASTLINE_DARK, width=5)
-        draw.line((p1[0], p1[1], p2[0], p2[1]), fill=COASTLINE, width=3)
+        draw.line((p1[0], p1[1], p2[0], p2[1]), fill=COASTLINE_DARK, width=3)
+        draw.line((p1[0], p1[1], p2[0], p2[1]), fill=COASTLINE, width=2)
 
 # ── Layout ─────────────────────────────────────────────────────────────────────
 
@@ -447,7 +482,7 @@ def render_planet_map(
 
     f_title  = _font(_SERIF,   20)
     f_abbr   = _font(_SANS,     8)
-    f_coord  = _font(_MONO,     7)
+    f_coord  = _font(_MONO,     6)
     f_pip    = _font(_SANS,     7)
     f_legend = _font(_SANSREG, 11)
 
@@ -485,10 +520,10 @@ def render_planet_map(
             lx2 = label_pos["coord_x"] if label_pos["cornered"] else cx - lw
             label_cy = label_pos["coord_y"]
             ly2 = label_cy - lh
-            shadow = (255,255,255,185) if terrain not in ("plains", "city") else (0,0,0,90)
-            fill = (20, 20, 20, 255) if terrain in ("plains", "city") else (235, 240, 235, 255)
-            for ox2, oy2 in [(-1,-1),(1,-1),(-1,1),(1,1),(0,-1),(0,1),(-1,0),(1,0)]:
-                draw.text((lx2+ox2, ly2+oy2), lbl, font=f_coord, fill=shadow)
+            light_tile = terrain in ("plains", "city", "hills", "forest")
+            shadow = (255,255,255,32) if not light_tile else (0,0,0,24)
+            fill = (28, 28, 28, 92) if light_tile else (235, 240, 235, 96)
+            draw.text((lx2+1, ly2+1), lbl, font=f_coord, fill=shadow)
             draw.text((lx2, ly2), lbl, font=f_coord, fill=fill)
         except Exception:
             pass
@@ -763,7 +798,7 @@ async def render_map_for_guild(guild_id: int, conn, planet_id: int = None,
 
     hex_data: dict = {}
     for r in hex_rows:
-        hex_data[r["address"]] = {"status": r["status"], "terrain": "flat"}
+        hex_data[r["address"]] = {"status": r["status"], "terrain": "plains"}
     for r in terrain_rows:
         if r["address"] in hex_data:
             hex_data[r["address"]]["terrain"] = r["terrain"]
@@ -864,7 +899,7 @@ def render_movement_map(
     draw = ImageDraw.Draw(img)
 
     f_abbr  = _font(_SANS,  8)
-    f_coord = _font(_MONO,  7)
+    f_coord = _font(_MONO,  6)
     f_title = _font(_SERIF, 16)
     f_pip   = _font(_SANS,  7)
 
@@ -913,10 +948,10 @@ def render_movement_map(
             label_cy = label_pos["coord_y"]
             lx2 = label_pos["coord_x"] if label_pos["cornered"] else cx - lw2
             ly2 = label_cy-lh2
-            shadow = (255,255,255,185) if terrain not in ("plains", "city") else (0,0,0,90)
-            fill = (20, 20, 20, 255) if terrain in ("plains", "city") else (235, 240, 235, 255)
-            for dx2, dy2 in [(-1,-1),(1,-1),(-1,1),(1,1),(0,-1),(0,1),(-1,0),(1,0)]:
-                draw.text((lx2+dx2, ly2+dy2), lbl, font=f_coord, fill=shadow)
+            light_tile = terrain in ("plains", "city", "hills", "forest")
+            shadow = (255,255,255,32) if not light_tile else (0,0,0,24)
+            fill = (28, 28, 28, 92) if light_tile else (235, 240, 235, 96)
+            draw.text((lx2+1, ly2+1), lbl, font=f_coord, fill=shadow)
             draw.text((lx2, ly2), lbl, font=f_coord, fill=fill)
         except Exception:
             pass
@@ -1152,7 +1187,7 @@ async def render_movement_map_for_guild(
 
     hex_data: dict = {}
     for r in hex_rows:
-        hex_data[r["address"]] = {"status": r["status"], "terrain": "flat"}
+        hex_data[r["address"]] = {"status": r["status"], "terrain": "plains"}
     for r in terrain_rows:
         if r["address"] in hex_data:
             hex_data[r["address"]]["terrain"] = r["terrain"]
@@ -1221,7 +1256,7 @@ async def render_gm_map_for_guild(guild_id: int, conn, planet_id: int = None,
 
     hex_data: dict = {}
     for r in hex_rows:
-        hex_data[r["address"]] = {"status": r["status"], "terrain": "flat"}
+        hex_data[r["address"]] = {"status": r["status"], "terrain": "plains"}
     for r in terrain_rows:
         if r["address"] in hex_data:
             hex_data[r["address"]]["terrain"] = r["terrain"]
