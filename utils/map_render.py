@@ -569,7 +569,14 @@ def draw_terrain_icon(draw, center, terrain_type, size):
     s = max(6, int(size * 0.22))
 
     if terrain == "forest":
-        return
+        col = (56, 56, 56, 62)
+        for ox in (-s * .20, s * .16):
+            x = cx + ox
+            draw.polygon(
+                [(x, cy - s * .38), (x - s * .22, cy + s * .10), (x + s * .22, cy + s * .10)],
+                fill=col,
+            )
+            draw.line((x, cy + s * .02, x, cy + s * .22), fill=(45, 45, 45, 55), width=1)
     elif terrain == "mountain":
         draw.polygon(
             [(cx - s * .58, cy + s * .30), (cx - s * .08, cy - s * .55), (cx + s * .22, cy + s * .30)],
@@ -582,7 +589,9 @@ def draw_terrain_icon(draw, center, terrain_type, size):
         draw.polygon([(cx - s * .16, cy - s * .42), (cx - s * .08, cy - s * .55), (cx, cy - s * .36)], fill=(220, 220, 220, 58))
         draw.polygon([(cx + s * .28, cy - s * .34), (cx + s * .36, cy - s * .46), (cx + s * .44, cy - s * .30)], fill=(220, 220, 220, 58))
     elif terrain == "hills":
-        return
+        col = (62, 62, 62, 52)
+        draw.arc((cx - s * .50, cy - s * .12, cx + s * .06, cy + s * .44), start=200, end=340, fill=col, width=1)
+        draw.arc((cx - s * .06, cy - s * .18, cx + s * .58, cy + s * .46), start=200, end=340, fill=col, width=1)
     elif terrain == "city":
         col = (52, 52, 52, 78)
         draw.rectangle((cx - s * .45, cy - s * .10, cx - s * .18, cy + s * .28), fill=col)
@@ -608,7 +617,7 @@ def draw_terrain_icon(draw, center, terrain_type, size):
         return
 
 
-def draw_terrain_hex(draw, hex_points, terrain_type, center):
+def draw_terrain_hex(draw, hex_points, terrain_type, center, icon_center=None):
     terrain = _terrain_key(terrain_type)
     base = TERRAIN_DEFS[terrain]["color"]
     key = f"{int(center[0])},{int(center[1])}:{terrain}"
@@ -618,7 +627,7 @@ def draw_terrain_hex(draw, hex_points, terrain_type, center):
 
     draw.polygon(hex_points, fill=(*fill, 255))
 
-    draw_terrain_icon(draw, center, terrain, HEX_SIZE)
+    draw_terrain_icon(draw, icon_center or center, terrain, HEX_SIZE)
     draw.polygon(hex_points, outline=(*border, 255), width=1)
 
 
@@ -705,7 +714,7 @@ def render_planet_map(
         occupied = _has_unit_markers(unit_data, key)
         label_pos = _hex_label_positions(cx, cy, occupied)
 
-        draw_terrain_hex(draw, corners, terrain, (cx, cy))
+        draw_terrain_hex(draw, corners, terrain, (cx, cy), (cx, cy - HEX_SIZE * 0.34))
 
         tint = STATUS_TINTS.get(status, (0,0,0,0))
         if tint[3] > 0:
@@ -1238,7 +1247,7 @@ def render_movement_map(
         occupied = _has_unit_markers(unit_data, key)
         label_pos = _hex_label_positions(cx, cy, occupied)
 
-        draw_terrain_hex(draw, corners, terrain, (cx, cy))
+        draw_terrain_hex(draw, corners, terrain, (cx, cy), (cx, cy - HEX_SIZE * 0.34))
 
         tint = STATUS_TINTS.get(status, (0,0,0,0))
         if tint[3] > 0:
