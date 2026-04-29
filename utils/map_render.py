@@ -565,56 +565,66 @@ def _edge_points(hex_points, direction_index):
 
 def draw_terrain_icon(draw, center, terrain_type, size):
     terrain = _terrain_key(terrain_type)
+    if terrain == "plains":
+        return
     cx, cy = center
-    s = max(6, int(size * 0.22))
+    s = max(7, int(size * 0.24))
+    badge_w = max(10, int(size * 0.34))
+    badge_h = max(7, int(size * 0.24))
+    x1 = cx - badge_w / 2
+    y1 = cy - badge_h / 2
+    x2 = cx + badge_w / 2
+    y2 = cy + badge_h / 2
+    base = TERRAIN_DEFS[terrain]["color"]
+    lum = sum(base) / 3
+    badge_fill = (212, 212, 212, 220) if lum < 145 else (48, 48, 48, 210)
+    badge_edge = (246, 246, 246, 230) if lum < 145 else (18, 18, 18, 220)
+    icon_col = (18, 18, 18, 255) if lum < 145 else (235, 235, 235, 245)
+
+    try:
+        draw.rounded_rectangle((x1, y1, x2, y2), radius=2, fill=badge_fill, outline=badge_edge, width=1)
+    except Exception:
+        draw.rectangle((x1, y1, x2, y2), fill=badge_fill, outline=badge_edge)
 
     if terrain == "forest":
-        col = (56, 56, 56, 62)
-        for ox in (-s * .20, s * .16):
+        for ox in (-s * .16, s * .16):
             x = cx + ox
             draw.polygon(
-                [(x, cy - s * .38), (x - s * .22, cy + s * .10), (x + s * .22, cy + s * .10)],
-                fill=col,
+                [(x, cy - s * .30), (x - s * .18, cy + s * .12), (x + s * .18, cy + s * .12)],
+                fill=icon_col,
             )
-            draw.line((x, cy + s * .02, x, cy + s * .22), fill=(45, 45, 45, 55), width=1)
+            draw.line((x, cy + s * .04, x, cy + s * .20), fill=icon_col, width=1)
     elif terrain == "mountain":
         draw.polygon(
-            [(cx - s * .58, cy + s * .30), (cx - s * .08, cy - s * .55), (cx + s * .22, cy + s * .30)],
-            fill=(42, 42, 42, 82),
+            [(cx - s * .44, cy + s * .22), (cx - s * .10, cy - s * .34), (cx + s * .12, cy + s * .22)],
+            fill=icon_col,
         )
         draw.polygon(
-            [(cx - s * .12, cy + s * .32), (cx + s * .36, cy - s * .46), (cx + s * .68, cy + s * .32)],
-            fill=(58, 58, 58, 76),
+            [(cx - s * .08, cy + s * .22), (cx + s * .26, cy - s * .28), (cx + s * .50, cy + s * .22)],
+            fill=icon_col,
         )
-        draw.polygon([(cx - s * .16, cy - s * .42), (cx - s * .08, cy - s * .55), (cx, cy - s * .36)], fill=(220, 220, 220, 58))
-        draw.polygon([(cx + s * .28, cy - s * .34), (cx + s * .36, cy - s * .46), (cx + s * .44, cy - s * .30)], fill=(220, 220, 220, 58))
     elif terrain == "hills":
-        col = (62, 62, 62, 52)
-        draw.arc((cx - s * .50, cy - s * .12, cx + s * .06, cy + s * .44), start=200, end=340, fill=col, width=1)
-        draw.arc((cx - s * .06, cy - s * .18, cx + s * .58, cy + s * .46), start=200, end=340, fill=col, width=1)
+        draw.arc((cx - s * .44, cy - s * .08, cx + s * .02, cy + s * .38), start=198, end=342, fill=icon_col, width=2)
+        draw.arc((cx - s * .02, cy - s * .10, cx + s * .48, cy + s * .40), start=198, end=342, fill=icon_col, width=2)
     elif terrain == "city":
-        col = (52, 52, 52, 78)
-        draw.rectangle((cx - s * .45, cy - s * .10, cx - s * .18, cy + s * .28), fill=col)
-        draw.rectangle((cx - s * .10, cy - s * .32, cx + s * .12, cy + s * .28), fill=(48, 48, 48, 84))
-        draw.rectangle((cx + s * .20, cy - s * .02, cx + s * .46, cy + s * .28), fill=col)
+        draw.rectangle((cx - s * .42, cy - s * .06, cx - s * .18, cy + s * .24), fill=icon_col)
+        draw.rectangle((cx - s * .10, cy - s * .28, cx + s * .12, cy + s * .24), fill=icon_col)
+        draw.rectangle((cx + s * .20, cy, cx + s * .42, cy + s * .24), fill=icon_col)
     elif terrain == "fort":
-        draw.rectangle((cx - s * .42, cy - s * .12, cx + s * .42, cy + s * .18), fill=(45, 45, 45, 66))
-        draw.line((cx - s * .28, cy - s * .22, cx + s * .28, cy - s * .22), fill=(70, 70, 70, 58), width=1)
+        draw.rectangle((cx - s * .42, cy - s * .08, cx + s * .42, cy + s * .18), fill=icon_col)
+        draw.line((cx - s * .30, cy - s * .22, cx + s * .30, cy - s * .22), fill=icon_col, width=2)
     elif terrain == "military":
-        draw.arc((cx - s * .38, cy - s * .32, cx + s * .38, cy + s * .40), start=195, end=345, fill=(42, 42, 42, 56), width=1)
-        draw.rectangle((cx - s * .34, cy + s * .08, cx + s * .34, cy + s * .20), fill=(42, 42, 42, 54))
+        draw.arc((cx - s * .38, cy - s * .30, cx + s * .38, cy + s * .38), start=195, end=345, fill=icon_col, width=2)
+        draw.rectangle((cx - s * .34, cy + s * .08, cx + s * .34, cy + s * .20), fill=icon_col)
     elif terrain == "water":
-        wave = (190, 190, 200, 64)
-        for oy in (s * .02,):
+        for oy in (-s * .06, s * .12):
             pts = [
                 (cx - s * .42, cy + oy),
                 (cx - s * .16, cy + oy - s * .10),
                 (cx + s * .10, cy + oy),
                 (cx + s * .36, cy + oy - s * .10),
             ]
-            draw.line(pts, fill=wave, width=1, joint="curve")
-    elif terrain == "plains":
-        return
+            draw.line(pts, fill=icon_col, width=1, joint="curve")
 
 
 def draw_terrain_hex(draw, hex_points, terrain_type, center, icon_center=None):
@@ -644,10 +654,6 @@ def draw_coastline(draw, hex_points, neighbors, terrain_type):
 # ── Layout ─────────────────────────────────────────────────────────────────────
 
 def draw_hex_coordinate(draw, label, label_pos, center, terrain_type, font):
-    terrain = _terrain_key(terrain_type)
-    base = TERRAIN_DEFS[terrain]["color"]
-    luminance = sum(base) / 3
-    fill = (18, 18, 18, 150) if luminance >= 145 else (232, 232, 232, 150)
     try:
         bb = draw.textbbox((0, 0), label, font=font)
         tw = bb[2] - bb[0]
@@ -655,7 +661,13 @@ def draw_hex_coordinate(draw, label, label_pos, center, terrain_type, font):
         cx, _ = center
         x = label_pos["coord_x"] if label_pos["cornered"] else cx - tw / 2
         y = label_pos["coord_y"] - th / 2
-        draw.text((x, y), label, font=font, fill=fill)
+        pad_x, pad_y = 1, 0
+        draw.rounded_rectangle(
+            (x - pad_x, y - pad_y, x + tw + pad_x, y + th + pad_y),
+            radius=1,
+            fill=(228, 228, 228, 210),
+        )
+        draw.text((x, y), label, font=font, fill=(0, 0, 0, 255))
     except Exception:
         pass
 
