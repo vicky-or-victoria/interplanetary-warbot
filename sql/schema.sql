@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS squadrons (
     guild_id            BIGINT      NOT NULL,
     planet_id           INT         NOT NULL DEFAULT 1,
     owner_id            BIGINT      NOT NULL,
-    owner_name          TEXT        NOT NULL DEFAULT 'Operative',
+    owner_name          TEXT        NOT NULL DEFAULT 'Commandant',
     name                TEXT        NOT NULL,
     brigade             TEXT        NOT NULL DEFAULT 'infantry',
     hex_address         TEXT        NOT NULL,
@@ -219,6 +219,7 @@ DO $$ BEGIN ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS active_planet_id  
 DO $$ BEGIN ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS overview_channel_id BIGINT DEFAULT NULL; END $$;
 DO $$ BEGIN ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS overview_message_id BIGINT DEFAULT NULL; END $$;
 DO $$ BEGIN ALTER TABLE squadrons    ADD COLUMN IF NOT EXISTS brigade            TEXT    NOT NULL DEFAULT 'infantry'; END $$;
+DO $$ BEGIN ALTER TABLE squadrons    ALTER COLUMN owner_name SET DEFAULT 'Commandant'; END $$;
 DO $$ BEGIN ALTER TABLE squadrons    ADD COLUMN IF NOT EXISTS transit_turns_left INT     NOT NULL DEFAULT 0; END $$;
 DO $$ BEGIN ALTER TABLE squadrons    ADD COLUMN IF NOT EXISTS last_moved_turn    INT     NOT NULL DEFAULT -1; END $$;
 DO $$ BEGIN ALTER TABLE squadrons    ADD COLUMN IF NOT EXISTS is_dug_in          BOOLEAN NOT NULL DEFAULT FALSE; END $$;
