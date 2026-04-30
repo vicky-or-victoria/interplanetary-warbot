@@ -193,8 +193,8 @@ class AdminPanelView(discord.ui.View):
             await i.response.send_message("Admins only.", ephemeral=True); return
         await i.response.send_modal(_TurnIntervalModal())
 
-    @discord.ui.button(label="ðŸ§­ Contract Board Setup", style=discord.ButtonStyle.primary, row=0)
-    async def contract_board_setup(self, i: discord.Interaction, b: discord.ui.Button):
+    async def contract_board_setup(self, i: discord.Interaction, b: discord.ui.Button = None):
+        """Available via pager view to avoid exceeding discord View child limits."""
         if not await _is_admin(self.bot, i):
             await i.response.send_message("Admins only.", ephemeral=True); return
         await i.response.send_modal(_ContractBoardSetupModal())
