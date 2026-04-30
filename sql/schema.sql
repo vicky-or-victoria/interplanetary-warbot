@@ -20,6 +20,8 @@ CREATE TABLE IF NOT EXISTS guild_config (
     reg_message_id        BIGINT       DEFAULT NULL,
     enlist_channel_id     BIGINT       DEFAULT NULL,
     enlist_message_id     BIGINT       DEFAULT NULL,
+    contract_board_channel_id BIGINT   DEFAULT NULL,
+    contract_board_message_id BIGINT   DEFAULT NULL,
     admin_role_id         BIGINT       DEFAULT NULL,
     player_role_id        BIGINT       DEFAULT NULL,
     gamemaster_role_id    BIGINT       DEFAULT NULL,
@@ -227,6 +229,8 @@ CREATE INDEX IF NOT EXISTS idx_cmd_badges  ON commander_badges(guild_id, owner_i
 -- Migration guards
 DO $$ BEGIN ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS enlist_channel_id  BIGINT DEFAULT NULL; END $$;
 DO $$ BEGIN ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS enlist_message_id  BIGINT DEFAULT NULL; END $$;
+DO $$ BEGIN ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS contract_board_channel_id BIGINT DEFAULT NULL; END $$;
+DO $$ BEGIN ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS contract_board_message_id BIGINT DEFAULT NULL; END $$;
 DO $$ BEGIN ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS active_planet_id   INT    DEFAULT 1;    END $$;
 DO $$ BEGIN ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS overview_channel_id BIGINT DEFAULT NULL; END $$;
 DO $$ BEGIN ALTER TABLE guild_config ADD COLUMN IF NOT EXISTS overview_message_id BIGINT DEFAULT NULL; END $$;

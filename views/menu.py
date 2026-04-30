@@ -211,14 +211,87 @@ async def _do_scavenge(i: discord.Interaction, guild_id: int):
 
 
 
-async def _active_contract(conn, guild_id:int):
-    return await conn.fetchrow("SELECT * FROM contracts WHERE guild_id=$1 AND status IN ('open','accepting','locked','deployable','active') ORDER BY id DESC LIMIT 1", guild_id)
+DEPLOYABLE_STATUSES = ("deployable", "active")
+BOARD_STATUSES = ("open", "accepting", "locked", "deployable", "active")
+
+
+async def fetch_contract(conn, guild_id: int, contract_id: int):
+    return await conn.fetchrow(
+        "SELECT * FROM contracts WHERE guild_id=$1 AND id=$2",
+        guild_id, contract_id)
+
+
+async def fetch_board_contracts(conn, guild_id: int, limit: int = 25):
+    return await conn.fetch(
+        """
+        SELECT c.*,
+               COUNT(ca.player_id)::INT AS accepted_count
+        FROM contracts c
+        LEFT JOIN contract_acceptances ca
+          ON ca.guild_id=c.guild_id AND ca.contract_id=c.id
+        WHERE c.guild_id=$1
+          AND c.status = ANY($2::text[])
+        GROUP BY c.id
+        ORDER BY c.created_at DESC, c.id DESC
+        LIMIT $3
+        """,
+        guild_id, list(BOARD_STATUSES), limit)
+
+
+def build_contract_board_embed(theme: dict, rows, selected_id: int = None) -> discord.Embed:
+    lines = []
+    if False:
+        marker = ">" if selected_id == c["id"] else " "
+        capacity = c["deployment_capacity"] or 0
+        deployed = c["deployed_units"] or 0
+        fleets = c["fleet_count"] or 0
+        accepted = c.get("accepted_count", 0) if hasattr(c, "get") else c["accepted_count"]
+        lines.append(
+            f"{marker} **CONTRACT #{c['id']:03d}: {c['title']}**\n"
+            f"Planet: {c['planet_system']} | Enemy: {c['enemy']}\n"
+            f"Status: {c['status']} | Accepted: {accepted}\n"
+            f"Fleets Assigned: {fleets} | Units Deployed: {deployed}/{capacity}\n"
+        )
+    return discord.Embed(
+        title="Contract Board",
+        color=theme.get("color", 0xAA2222),
+        description=("\n".join(lines)[:3900] if lines else "No contracts on the board yet."),
+    )
+
+
+class ContractSelect(discord.ui.Select):
+    def __init__(self, rows, selected_id: int = None):
+        options = []
+        for c in rows[:25]:
+            capacity = c["deployment_capacity"] or 0
+            deployed = c["deployed_units"] or 0
+            options.append(discord.SelectOption(
+                label=f"#{c['id']:03d} {c['title']}"[:100],
+                value=str(c["id"]),
+                description=f"{c['status']} | fleets {c['fleet_count'] or 0} | units {deployed}/{capacity}"[:100],
+                default=(selected_id == c["id"]),
+            ))
+        super().__init__(placeholder="Select a contract...", options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        selected_id = int(self.values[0])
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            theme = await get_theme(conn, interaction.guild_id)
+            rows = await fetch_board_contracts(conn, interaction.guild_id)
+        embed = build_contract_board_embed(theme, rows, selected_id)
+        await interaction.response.edit_message(
+            embed=embed,
+            view=ContractBoardView(interaction.guild_id, rows, selected_id))
 
 
 class ContractBoardView(View):
-    def __init__(self, guild_id:int):
+    def __init__(self, guild_id:int, rows=None, selected_id: int = None):
         super().__init__(timeout=180)
-        self.guild_id=guild_id
+        self.guild_id = guild_id
+        self.selected_id = selected_id
+        if rows:
+            self.add_item(ContractSelect(rows, selected_id))
 
     @discord.ui.button(label="View", style=discord.ButtonStyle.secondary, row=0)
     async def view_contract(self,i,b):
@@ -226,42 +299,66 @@ class ContractBoardView(View):
 
     @discord.ui.button(label="Accept", style=discord.ButtonStyle.success, row=0)
     async def accept_contract(self,i,b):
+        if not self.selected_id:
+            await i.response.send_message("Select a contract first.", ephemeral=True); return
         pool=await get_pool()
         async with pool.acquire() as conn:
-            c=await _active_contract(conn,i.guild_id)
+            c=await fetch_contract(conn,i.guild_id,self.selected_id)
             if not c:
                 await i.response.send_message("No contract available.",ephemeral=True); return
+            if c["status"] != "accepting":
+                await i.response.send_message("This contract is not accepting sign-ups.",ephemeral=True); return
             await conn.execute("INSERT INTO contract_acceptances (guild_id, contract_id, player_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING", i.guild_id, c['id'], i.user.id)
-        await i.response.send_message("Accepted current contract.",ephemeral=True)
+        await i.response.send_message(f"Accepted contract #{c['id']:03d}.",ephemeral=True)
 
     @discord.ui.button(label="Withdraw", style=discord.ButtonStyle.danger, row=0)
     async def withdraw_contract(self,i,b):
+        if not self.selected_id:
+            await i.response.send_message("Select a contract first.", ephemeral=True); return
         pool=await get_pool()
         async with pool.acquire() as conn:
-            c=await _active_contract(conn,i.guild_id)
+            c=await fetch_contract(conn,i.guild_id,self.selected_id)
             if not c:
                 await i.response.send_message("No contract available.",ephemeral=True); return
+            if c["status"] != "accepting":
+                await i.response.send_message("Sign-ups are locked for this contract.",ephemeral=True); return
             await conn.execute("DELETE FROM contract_acceptances WHERE guild_id=$1 AND contract_id=$2 AND player_id=$3", i.guild_id, c['id'], i.user.id)
-        await i.response.send_message("Withdrawn from current contract.",ephemeral=True)
+        await i.response.send_message(f"Withdrawn from contract #{c['id']:03d}.",ephemeral=True)
 
-    @discord.ui.button(label="Deploy", style=discord.ButtonStyle.primary, row=0)
+    @discord.ui.button(label="Deploy Roster", style=discord.ButtonStyle.primary, row=0)
     async def deploy_contract(self,i,b):
+        if not self.selected_id:
+            await i.response.send_message("Select a contract first.", ephemeral=True); return
         from cogs.squadron_cog import open_returning_deploy
-        await open_returning_deploy(i)
+        await open_returning_deploy(i, self.selected_id)
+
+    @discord.ui.button(label="New Unit", style=discord.ButtonStyle.success, row=1)
+    async def new_unit_contract(self,i,b):
+        if not self.selected_id:
+            await i.response.send_message("Select a contract first.", ephemeral=True); return
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            c = await fetch_contract(conn, i.guild_id, self.selected_id)
+            accepted = await conn.fetchval(
+                "SELECT 1 FROM contract_acceptances WHERE guild_id=$1 AND contract_id=$2 AND player_id=$3",
+                i.guild_id, self.selected_id, i.user.id)
+        if not c or c["status"] not in DEPLOYABLE_STATUSES or not accepted:
+            await i.response.send_message("Select an accepted, fleet-assigned deployable contract first.", ephemeral=True); return
+        await i.response.send_modal(_UnitNameModal(i.guild_id, False, self.selected_id))
 
 
 async def _send_contract_board(i: discord.Interaction):
     pool=await get_pool()
     async with pool.acquire() as conn:
         theme=await get_theme(conn,i.guild_id)
-        rows=await conn.fetch("SELECT * FROM contracts WHERE guild_id=$1 ORDER BY id DESC LIMIT 10", i.guild_id)
+        rows=await fetch_board_contracts(conn, i.guild_id)
     if not rows:
         await i.response.send_message("No contracts on the board yet.",ephemeral=True); return
-    lines=[]
-    for c in rows:
+    selected_id = rows[0]["id"]
+    for c in []:
         lines.append(f"**CONTRACT #{c['id']:03d} — {c['title']}**\nFleets: {c['fleet_count']}\nCapacity: {c['deployment_capacity']} units\nStatus: {c['status']}\n")
-    embed=discord.Embed(title="Contract Board", color=theme.get('color',0xAA2222), description="\n".join(lines)[:3900])
-    await i.response.send_message(embed=embed, view=ContractBoardView(i.guild_id), ephemeral=True)
+    embed=build_contract_board_embed(theme, rows, selected_id)
+    await i.response.send_message(embed=embed, view=ContractBoardView(i.guild_id, rows, selected_id), ephemeral=True)
 
 
 # ── War status ────────────────────────────────────────────────────────────────
@@ -519,16 +616,17 @@ class _UnitNameModal(discord.ui.Modal, title="Name Your Unit"):
         required=True,
     )
 
-    def __init__(self, guild_id: int, returning: bool = False):
+    def __init__(self, guild_id: int, returning: bool = False, contract_id: int = None):
         super().__init__()
         self.guild_id = guild_id
         self.returning = returning
+        self.contract_id = contract_id
 
     async def on_submit(self, i: discord.Interaction):
         from cogs.squadron_cog import BrigadePickerView, brigade_picker_embed
         name = str(self.unit_name).strip()
         embed = brigade_picker_embed(name, returning=self.returning)
-        await i.response.send_message(embed=embed, view=BrigadePickerView(i.guild_id, name), ephemeral=True)
+        await i.response.send_message(embed=embed, view=BrigadePickerView(i.guild_id, name, self.contract_id), ephemeral=True)
 
 
 class EnlistView(View):
@@ -541,13 +639,12 @@ class EnlistView(View):
     @discord.ui.button(label="Enlist Now", style=discord.ButtonStyle.success,
                        custom_id="enlist_board_enlist")
     async def enlist_now(self, i: discord.Interaction, b: Button):
-        await i.response.send_modal(_UnitNameModal(i.guild_id, False))
+        await _send_contract_board(i)
 
     @discord.ui.button(label="Deploy", style=discord.ButtonStyle.primary,
                        custom_id="enlist_board_deploy")
     async def deploy_now(self, i: discord.Interaction, b: Button):
-        from cogs.squadron_cog import open_returning_deploy
-        await open_returning_deploy(i)
+        await _send_contract_board(i)
 
     @discord.ui.button(label="Brigade Info", style=discord.ButtonStyle.secondary,
                        custom_id="enlist_board_brigades")
@@ -603,7 +700,30 @@ async def refresh_enlist_counter(bot, guild_id: int, conn):
         logging.getLogger(__name__).warning(f"Enlist counter refresh failed: {e}")
 
 
+async def refresh_contract_board(bot, guild_id: int, conn):
+    """Update the persistent contract board, if configured."""
+    try:
+        cfg = await conn.fetchrow(
+            "SELECT contract_board_channel_id, contract_board_message_id "
+            "FROM guild_config WHERE guild_id=$1", guild_id)
+        if not cfg or not cfg["contract_board_channel_id"] or not cfg["contract_board_message_id"]:
+            return
+        channel = bot.get_channel(cfg["contract_board_channel_id"])
+        if not channel:
+            return
+        msg = await channel.fetch_message(cfg["contract_board_message_id"])
+        theme = await get_theme(conn, guild_id)
+        rows = await fetch_board_contracts(conn, guild_id)
+        selected_id = rows[0]["id"] if rows else None
+        embed = build_contract_board_embed(theme, rows, selected_id)
+        await msg.edit(embed=embed, view=ContractBoardView(guild_id, rows, selected_id))
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Contract board refresh failed: {e}")
+
+
 async def refresh_public_panels(bot, guild_id: int, conn):
     """Refresh persistent public embeds that describe the current theatre."""
     await update_menu_embed(bot, guild_id, conn)
     await refresh_enlist_counter(bot, guild_id, conn)
+    await refresh_contract_board(bot, guild_id, conn)

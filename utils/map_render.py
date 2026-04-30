@@ -952,7 +952,8 @@ def _draw_overview_active_panel(draw, box, active_planet, fonts):
         ("Status", "ACTIVE" if active_planet else "NO SIGNAL"),
         ("Control", _overview_value(active_planet, "contractor")),
         ("Enemy Presence", _overview_value(active_planet, "enemy_type")),
-        ("Fleets Deployed", str(_overview_value(active_planet, "player_units", 0))),
+        ("Fleets Assigned", str(_overview_value(active_planet, "fleet_count", 0))),
+        ("Units Deployed", f"{_overview_value(active_planet, 'player_units', 0)} / {_overview_value(active_planet, 'deployment_capacity', 0)}"),
         ("Hostile Contacts", str(_overview_value(active_planet, "enemy_units", 0))),
     ]
     y = y1 + 96
@@ -1704,13 +1705,28 @@ async def render_overview_for_guild(guild_id: int, conn) -> io.BytesIO:
     enemy_counts = await conn.fetch(
         "SELECT planet_id, COUNT(*) AS count FROM enemy_units "
         "WHERE guild_id=$1 AND is_active=TRUE GROUP BY planet_id", guild_id)
+    contract_rows = await conn.fetch(
+        """
+        SELECT planet_system,
+               SUM(fleet_count)::INT AS fleet_count,
+               SUM(deployment_capacity)::INT AS deployment_capacity
+        FROM contracts
+        WHERE guild_id=$1
+          AND status IN ('deployable','active')
+        GROUP BY planet_system
+        """,
+        guild_id)
     players_by_planet = {row["planet_id"]: row["count"] for row in player_counts}
     enemies_by_planet = {row["planet_id"]: row["count"] for row in enemy_counts}
+    contracts_by_system = {row["planet_system"]: row for row in contract_rows}
     overview_planets = []
     for planet in planets:
         item = dict(planet)
         item["player_units"] = int(players_by_planet.get(item["id"], 0) or 0)
         item["enemy_units"] = int(enemies_by_planet.get(item["id"], 0) or 0)
+        cstats = contracts_by_system.get(item["name"])
+        item["fleet_count"] = int(cstats["fleet_count"] if cstats else 0)
+        item["deployment_capacity"] = int(cstats["deployment_capacity"] if cstats else 0)
         overview_planets.append(item)
     return render_planetary_system_overview(overview_planets, active_id, theme, int(turn_count) + 1)
 

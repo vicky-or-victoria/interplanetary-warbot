@@ -497,17 +497,19 @@ def brigade_picker_embed(unit_name: str, returning: bool = False) -> discord.Emb
 
 
 class BrigadePickerView(discord.ui.View):
-    def __init__(self, guild_id: int, unit_name: str):
+    def __init__(self, guild_id: int, unit_name: str, contract_id: int):
         super().__init__(timeout=120)
         self.guild_id  = guild_id
         self.unit_name = unit_name
-        self.add_item(BrigadeSelect(guild_id, unit_name))
+        self.contract_id = contract_id
+        self.add_item(BrigadeSelect(guild_id, unit_name, contract_id))
 
 
 class BrigadeSelect(discord.ui.Select):
-    def __init__(self, guild_id: int, unit_name: str):
+    def __init__(self, guild_id: int, unit_name: str, contract_id: int):
         self.guild_id  = guild_id
         self.unit_name = unit_name
+        self.contract_id = contract_id
         options = [
             discord.SelectOption(
                 label=f"{b['emoji']} {b['name']}",
@@ -520,7 +522,7 @@ class BrigadeSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         await interaction.response.send_modal(
-            DeployModal(interaction.guild_id, self.unit_name, self.values[0]))
+            DeployModal(interaction.guild_id, self.unit_name, self.values[0], self.contract_id))
 
 
 class DeployModal(discord.ui.Modal, title="Deploy Your Unit"):
@@ -531,11 +533,12 @@ class DeployModal(discord.ui.Modal, title="Deploy Your Unit"):
         required=True,
     )
 
-    def __init__(self, guild_id: int, unit_name: str, brigade: str):
+    def __init__(self, guild_id: int, unit_name: str, brigade: str, contract_id: int):
         super().__init__()
         self.guild_id  = guild_id
         self.unit_name = unit_name
         self.brigade   = brigade
+        self.contract_id = contract_id
 
     async def on_submit(self, interaction: discord.Interaction):
         dest = str(self.destination).strip()
@@ -556,9 +559,14 @@ class DeployModal(discord.ui.Modal, title="Deploy Your Unit"):
             cfg_state = await conn.fetchrow("SELECT game_started FROM guild_config WHERE guild_id=$1", self.guild_id)
             if not cfg_state or not cfg_state['game_started']:
                 await interaction.followup.send("No active contract is accepting deployments yet.", ephemeral=True); return
-            active_contract = await conn.fetchrow("SELECT id, deployment_capacity, deployed_units FROM contracts WHERE guild_id=$1 AND status IN ('deployable','active') ORDER BY id DESC LIMIT 1", self.guild_id)
+            active_contract = await conn.fetchrow(
+                "SELECT id, deployment_capacity, deployed_units, fleet_count, status "
+                "FROM contracts WHERE guild_id=$1 AND id=$2",
+                self.guild_id, self.contract_id)
             if not active_contract or active_contract['deployment_capacity'] <= 0:
                 await interaction.followup.send("No fleet-assigned contract is deployable yet.", ephemeral=True); return
+            if active_contract["status"] not in ("deployable", "active") or (active_contract["fleet_count"] or 0) < 1:
+                await interaction.followup.send("That contract is not deployable yet.", ephemeral=True); return
             if (active_contract['deployed_units'] or 0) >= (active_contract['deployment_capacity'] or 0):
                 await interaction.followup.send("All deployment slots are filled for this contract.", ephemeral=True); return
             accepted = await conn.fetchval("SELECT 1 FROM contract_acceptances WHERE guild_id=$1 AND contract_id=$2 AND player_id=$3", self.guild_id, active_contract['id'], interaction.user.id)
@@ -575,7 +583,7 @@ class DeployModal(discord.ui.Modal, title="Deploy Your Unit"):
             rostered = await conn.fetchrow(
                 "SELECT id, name FROM squadrons "
                 "WHERE guild_id=$1 AND owner_id=$2 "
-                "ORDER BY id DESC LIMIT 1",
+                "ORDER BY id DESC",
                 self.guild_id, interaction.user.id)
             if rostered:
                 await interaction.followup.send(
@@ -612,7 +620,9 @@ class DeployModal(discord.ui.Modal, title="Deploy Your Unit"):
                 v(stats["attack"]), v(stats["defense"]), v(stats["speed"]),
                 v(stats["morale"]), v(stats["supply"]),  v(stats["recon"]))
 
-            new_sq = await conn.fetchrow("SELECT id FROM squadrons WHERE guild_id=$1 AND owner_id=$2 ORDER BY id DESC LIMIT 1", self.guild_id, interaction.user.id)
+            new_sq = await conn.fetchrow(
+                "SELECT id FROM squadrons WHERE guild_id=$1 AND owner_id=$2 AND name=$3",
+                self.guild_id, interaction.user.id, self.unit_name)
             await conn.execute("UPDATE contracts SET deployed_units=deployed_units+1, status='active' WHERE id=$1", active_contract['id'])
             if new_sq:
                 await conn.execute("INSERT INTO unit_contract_map (guild_id, squadron_id, contract_id) VALUES ($1,$2,$3) ON CONFLICT (guild_id, squadron_id) DO UPDATE SET contract_id=EXCLUDED.contract_id", self.guild_id, new_sq['id'], active_contract['id'])
@@ -681,10 +691,11 @@ class ExistingDeployModal(discord.ui.Modal, title="Deploy Existing Unit"):
         required=True,
     )
 
-    def __init__(self, guild_id: int, squadron_id: int):
+    def __init__(self, guild_id: int, squadron_id: int, contract_id: int):
         super().__init__()
         self.guild_id = guild_id
         self.squadron_id = squadron_id
+        self.contract_id = contract_id
 
     async def on_submit(self, interaction: discord.Interaction):
         dest = str(self.destination).strip()
@@ -706,9 +717,15 @@ class ExistingDeployModal(discord.ui.Modal, title="Deploy Existing Unit"):
                 await interaction.followup.send(
                     "No active contract is accepting deployments yet.", ephemeral=True)
                 return
-            active_contract = await conn.fetchrow("SELECT id, deployment_capacity, deployed_units FROM contracts WHERE guild_id=$1 AND status IN ('deployable','active') ORDER BY id DESC LIMIT 1", self.guild_id)
+            active_contract = await conn.fetchrow(
+                "SELECT id, deployment_capacity, deployed_units, fleet_count, status "
+                "FROM contracts WHERE guild_id=$1 AND id=$2",
+                self.guild_id, self.contract_id)
             if not active_contract or active_contract['deployment_capacity'] <= 0:
                 await interaction.followup.send("No fleet-assigned contract is deployable yet.", ephemeral=True)
+                return
+            if active_contract["status"] not in ("deployable", "active") or (active_contract["fleet_count"] or 0) < 1:
+                await interaction.followup.send("That contract is not deployable yet.", ephemeral=True)
                 return
             if (active_contract['deployed_units'] or 0) >= (active_contract['deployment_capacity'] or 0):
                 await interaction.followup.send("All deployment slots are filled for this contract.", ephemeral=True)
@@ -802,7 +819,7 @@ class ExistingDeployModal(discord.ui.Modal, title="Deploy Existing Unit"):
 
 
 class ReturningUnitSelect(discord.ui.Select):
-    def __init__(self, guild_id: int, rows):
+    def __init__(self, guild_id: int, rows, contract_id: int):
         options = []
         for row in rows[:25]:
             brig = get_brigade(row["brigade"])
@@ -814,19 +831,24 @@ class ReturningUnitSelect(discord.ui.Select):
             ))
         super().__init__(placeholder="Choose a roster unit to deploy...", options=options)
         self.guild_id = guild_id
+        self.contract_id = contract_id
 
     async def callback(self, interaction: discord.Interaction):
         await interaction.response.send_modal(
-            ExistingDeployModal(self.guild_id, int(self.values[0])))
+            ExistingDeployModal(self.guild_id, int(self.values[0]), self.contract_id))
 
 
 class ReturningUnitDeployView(discord.ui.View):
-    def __init__(self, guild_id: int, rows):
+    def __init__(self, guild_id: int, rows, contract_id: int):
         super().__init__(timeout=120)
-        self.add_item(ReturningUnitSelect(guild_id, rows))
+        self.add_item(ReturningUnitSelect(guild_id, rows, contract_id))
 
 
-async def open_returning_deploy(interaction: discord.Interaction):
+async def open_returning_deploy(interaction: discord.Interaction, contract_id: int = None):
+    if contract_id is None:
+        from views.menu import _send_contract_board
+        await _send_contract_board(interaction)
+        return
     await ensure_guild(interaction.guild_id)
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -838,14 +860,22 @@ async def open_returning_deploy(interaction: discord.Interaction):
             await interaction.response.send_message(
                 "No active contract is accepting deployments yet.", ephemeral=True)
             return
-        active_contract = await conn.fetchrow("SELECT deployment_capacity, deployed_units FROM contracts WHERE guild_id=$1 AND status IN ('deployable','active') ORDER BY id DESC LIMIT 1", interaction.guild_id)
+        active_contract = await conn.fetchrow(
+            "SELECT id, deployment_capacity, deployed_units, fleet_count, status "
+            "FROM contracts WHERE guild_id=$1 AND id=$2",
+            interaction.guild_id, contract_id)
         if not active_contract or active_contract['deployment_capacity'] <= 0:
             await interaction.response.send_message("No fleet-assigned contract is deployable yet.", ephemeral=True)
+            return
+        if active_contract["status"] not in ("deployable", "active") or (active_contract["fleet_count"] or 0) < 1:
+            await interaction.response.send_message("That contract is not deployable yet.", ephemeral=True)
             return
         if (active_contract['deployed_units'] or 0) >= (active_contract['deployment_capacity'] or 0):
             await interaction.response.send_message("All deployment slots are filled for this contract.", ephemeral=True)
             return
-        accepted = await conn.fetchval("SELECT 1 FROM contract_acceptances WHERE guild_id=$1 AND contract_id=(SELECT id FROM contracts WHERE guild_id=$1 AND status IN ('deployable','active') ORDER BY id DESC LIMIT 1) AND player_id=$2", interaction.guild_id, interaction.user.id)
+        accepted = await conn.fetchval(
+            "SELECT 1 FROM contract_acceptances WHERE guild_id=$1 AND contract_id=$2 AND player_id=$3",
+            interaction.guild_id, contract_id, interaction.user.id)
         if not accepted:
             await interaction.response.send_message("Accept the contract from Contract Status before deploying.", ephemeral=True)
             return
@@ -880,7 +910,7 @@ async def open_returning_deploy(interaction: discord.Interaction):
         return
     if len(rows) == 1:
         await interaction.response.send_modal(
-            ExistingDeployModal(interaction.guild_id, rows[0]["id"]))
+            ExistingDeployModal(interaction.guild_id, rows[0]["id"], contract_id))
         return
 
     embed = discord.Embed(
@@ -893,7 +923,7 @@ async def open_returning_deploy(interaction: discord.Interaction):
     )
     await interaction.response.send_message(
         embed=embed,
-        view=ReturningUnitDeployView(interaction.guild_id, rows),
+        view=ReturningUnitDeployView(interaction.guild_id, rows, contract_id),
         ephemeral=True)
 
 
@@ -1281,4 +1311,3 @@ async def setup(bot):
     await bot.add_cog(SquadronCog(bot))
     from views.menu import EnlistView
     bot.add_view(EnlistView(guild_id=0))
-
