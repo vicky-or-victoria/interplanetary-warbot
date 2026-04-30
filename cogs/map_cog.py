@@ -1,5 +1,5 @@
 """
-Map cog — /map, /map_overview commands and auto-update helpers.
+Map cog â€” /map, /map_overview commands and auto-update helpers.
 """
 
 import discord
@@ -7,6 +7,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from utils.db import get_pool, ensure_guild, get_theme, get_active_planet_id
+from utils.revenant_ui import build_revenant_embed, format_section
 from cogs.admin_cog import _is_admin, _is_gm
 
 
@@ -25,14 +26,15 @@ class MapCog(commands.Cog):
                 from utils.map_render import render_map_for_guild
                 buf = await render_map_for_guild(interaction.guild_id, conn)
             except Exception as e:
-                await interaction.followup.send(f"❌ Map render failed: {e}")
+                await interaction.followup.send(f"âŒ Map render failed: {e}")
                 return
         f     = discord.File(buf, filename="warmap.png")
-        embed = discord.Embed(
-            title=f"🗺️ {theme.get('bot_name','WARBOT')} — Tactical Map",
-            color=theme.get("color", 0xAA2222))
+        embed = build_revenant_embed(
+            "Tactical Map",
+            format_section("Tactical Map", ["**Status:** Current theatre map attached."]),
+            "info",
+            footer=theme.get("flavor_text", ""))
         embed.set_image(url="attachment://warmap.png")
-        embed.set_footer(text=theme.get("flavor_text",""))
         await interaction.followup.send(embed=embed, file=f)
 
     @app_commands.command(name="map_overview",
@@ -47,12 +49,12 @@ class MapCog(commands.Cog):
                 from utils.map_render import render_overview_for_guild
                 buf = await render_overview_for_guild(interaction.guild_id, conn)
             except Exception as e:
-                await interaction.followup.send(f"❌ Overview render failed: {e}")
+                await interaction.followup.send(f"âŒ Overview render failed: {e}")
                 return
         f     = discord.File(buf, filename="overview.png")
         embed = discord.Embed(
-            title=f"🪐 {theme.get('bot_name','WARBOT')} — Planetary Theatres",
-            color=theme.get("color", 0xAA2222))
+            title="REVENANT | System Overview",
+            color=0x34495E)
         embed.set_image(url="attachment://overview.png")
         await interaction.followup.send(embed=embed, file=f)
 
@@ -64,14 +66,14 @@ class MapCog(commands.Cog):
         ok = await auto_update_map(self.bot, interaction.guild_id)
         ok2 = await auto_update_overview(self.bot, interaction.guild_id)
         msg = []
-        if ok:  msg.append("✅ Tactical map updated.")
-        if ok2: msg.append("✅ Planetary system overview updated.")
-        if not msg: msg.append("❌ No map channels configured.")
+        if ok:  msg.append("âœ… Tactical map updated.")
+        if ok2: msg.append("âœ… Planetary system overview updated.")
+        if not msg: msg.append("âŒ No map channels configured.")
         await interaction.followup.send("\n".join(msg), ephemeral=True)
 
     @app_commands.command(
         name="gm_map",
-        description="[GM] Full GM map — all unit positions revealed, no fog of war.",
+        description="[GM] Full GM map â€” all unit positions revealed, no fog of war.",
     )
     async def gm_map_cmd(self, interaction: discord.Interaction):
         """Ephemeral GM map visible only to the requesting GM/Admin."""
@@ -79,7 +81,7 @@ class MapCog(commands.Cog):
         # Only GMs and admins may use this command
         if not (await _is_admin(self.bot, interaction) or await _is_gm(interaction)):
             await interaction.response.send_message(
-                "🚫 This command is restricted to GMs and Admins.", ephemeral=True
+                "ðŸš« This command is restricted to GMs and Admins.", ephemeral=True
             )
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
@@ -90,23 +92,23 @@ class MapCog(commands.Cog):
                 from utils.map_render import render_gm_map_for_guild
                 buf = await render_gm_map_for_guild(interaction.guild_id, conn)
             except Exception as e:
-                await interaction.followup.send(f"❌ GM map render failed: {e}", ephemeral=True)
+                await interaction.followup.send(f"âŒ GM map render failed: {e}", ephemeral=True)
                 return
         f = discord.File(buf, filename="gm_map.png")
         embed = discord.Embed(
-            title=f"🗺️ {theme.get('bot_name', 'WARBOT')} — GM Map (All Units)",
+            title="REVENANT | GM Control Panel",
             description=(
                 "**Fog of war lifted.** All player and enemy units are shown with their "
                 "exact positions. This message is only visible to you."
             ),
-            color=0x2ECC71,
+            color=0x6C5CE7,
         )
         embed.set_image(url="attachment://gm_map.png")
-        embed.set_footer(text="GM eyes only — this response is ephemeral.")
+        embed.set_footer(text="GM eyes only â€” this response is ephemeral.")
         await interaction.followup.send(embed=embed, file=f, ephemeral=True)
 
 
-# ── Auto-update helpers (called by turn engine + admin cog) ───────────────────
+# â”€â”€ Auto-update helpers (called by turn engine + admin cog) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async def auto_update_map(bot, guild_id: int, movement_arrows: list = None) -> bool:
     pool = await get_pool()
@@ -131,10 +133,9 @@ async def auto_update_map(bot, guild_id: int, movement_arrows: list = None) -> b
 
     f     = discord.File(buf, filename="warmap.png")
     embed = discord.Embed(
-        title=f"🗺️ {theme.get('bot_name','WARBOT')} — Live Tactical Map",
-        color=theme.get("color", 0xAA2222))
+        title="REVENANT | Tactical Map",
+        color=0x34495E)
     embed.set_image(url="attachment://warmap.png")
-    embed.set_footer(text=theme.get("flavor_text",""))
 
     try:
         if cfg["map_message_id"]:
@@ -179,8 +180,8 @@ async def auto_update_overview(bot, guild_id: int) -> bool:
 
     f     = discord.File(buf, filename="overview.png")
     embed = discord.Embed(
-        title=f"🪐 {theme.get('bot_name','WARBOT')} — Planetary Theatres",
-        color=theme.get("color", 0xAA2222))
+        title="REVENANT | System Overview",
+        color=0x34495E)
     embed.set_image(url="attachment://overview.png")
 
     try:
@@ -205,3 +206,4 @@ async def auto_update_overview(bot, guild_id: int) -> bool:
 
 async def setup(bot):
     await bot.add_cog(MapCog(bot))
+

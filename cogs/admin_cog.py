@@ -19,6 +19,7 @@ from utils.map_render import TERRAIN_TYPES, generate_biome_terrain_map
 from utils.brigades import BRIGADES
 from utils.profiles import cosmetic_key, ensure_commander_profile, grant_default_banner
 from utils.operational_tempo import add_operational_tempo, capacity_for_fleets, TRANSMISSION_VARIANTS
+from utils.revenant_ui import build_revenant_embed, format_section, kv
 
 
 # Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
@@ -87,22 +88,16 @@ async def _refresh_public_surfaces(bot, guild_id: int, conn=None, *, maps: bool 
 # Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 
 def _admin_panel_embed(theme: dict) -> discord.Embed:
-    return discord.Embed(
-        title=f"Ã¢Å¡â„¢ {theme.get('bot_name', 'WARBOT')} Ã¢â‚¬â€ Admin Panel",
-        color=theme.get("color", 0xAA2222),
-        description=(
-            "**Game Control**\n"
-            "Reset Ã‚Â· Status Ã‚Â· Turn Interval Ã‚Â· **Force Turn**\n\n"
-            "**Planets**\n"
-            "List Ã‚Â· Add Ã‚Â· Remove Ã‚Â· Set Active Ã‚Â· Edit\n\n"
-            "**Theme & Appearance**\n"
-            "View Theme Ã‚Â· Set Theme Ã‚Â· Set Color\n\n"
-            "**Channels & Roles**\n"
-            "Map Ã‚Â· Overview Ã‚Â· Menu Ã‚Â· Enlist Ã‚Â· Report Ã‚Â· Announcement Ã‚Â· Admin Role Ã‚Â· Player Role Ã‚Â· GM Role\n\n"
-            "**Terrain**\n"
-            "Set Terrain Ã‚Â· Reset Terrain"
-        ),
-    ).set_footer(text="All actions are ephemeral Ã¢â‚¬â€ only you can see them.")
+    return build_revenant_embed(
+        "Setup",
+        format_section("Setup", [
+            "**Config Status:** Admin tools online.",
+            "**Channels:** Map, Overview, Menu, Enlist, Contract Board, Reports.",
+            "**Roles:** Admin, Player, GM.",
+            "**Terrain:** Set, randomize, or reset theatre terrain.",
+        ]),
+        "admin",
+        footer="Admin only")
 
 
 class AdminPanelView(discord.ui.View):
@@ -121,7 +116,7 @@ class AdminPanelView(discord.ui.View):
 
     # Ã¢â€â‚¬Ã¢â€â‚¬ Row 0: Game Control Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
-    @discord.ui.button(label="Ã°Å¸â€â€ž Reset War", style=discord.ButtonStyle.danger, row=0)
+    @discord.ui.button(label="Reset", style=discord.ButtonStyle.danger, row=0)
     async def game_reset(self, i: discord.Interaction, b: discord.ui.Button):
         if not await _is_admin(self.bot, i):
             await i.response.send_message("Admins only.", ephemeral=True); return
@@ -150,7 +145,7 @@ class AdminPanelView(discord.ui.View):
         await i.edit_original_response(content="War data cleared.", view=None)
         await _refresh_public_surfaces(self.bot, i.guild_id)
 
-    @discord.ui.button(label="Ã°Å¸â€œÅ  Status", style=discord.ButtonStyle.secondary, row=0)
+    @discord.ui.button(label="Refresh", style=discord.ButtonStyle.secondary, row=0)
     async def game_status(self, i: discord.Interaction, b: discord.ui.Button):
         await ensure_guild(i.guild_id)
         pool = await get_pool()
@@ -174,8 +169,8 @@ class AdminPanelView(discord.ui.View):
                 "SELECT COUNT(*) FROM turn_history WHERE guild_id=$1 AND planet_id=$2",
                 i.guild_id, planet_id) or 0
         embed = discord.Embed(
-            title=f"{theme.get('bot_name','WARBOT')} Ã¢â‚¬â€ War Status",
-            color=theme.get("color", 0xAA2222))
+            title="REVENANT | System Overview",
+            color=0x34495E)
         embed.add_field(name="State",    value="Active" if cfg["game_started"] else "Paused", inline=True)
         embed.add_field(name="Turn",     value=str(turns), inline=True)
         embed.add_field(name="Interval", value=f"{cfg['turn_interval_hours']}h", inline=True)
@@ -189,7 +184,7 @@ class AdminPanelView(discord.ui.View):
         embed.set_footer(text=f"Last advance: {cfg['last_turn_at'].strftime('%Y-%m-%d %H:%M UTC')}")
         await i.response.send_message(embed=embed, ephemeral=True)
 
-    @discord.ui.button(label="Ã¢ÂÂ± Turn Interval", style=discord.ButtonStyle.secondary, row=0)
+    @discord.ui.button(label="Setup", style=discord.ButtonStyle.secondary, row=0)
     async def set_turn_interval(self, i: discord.Interaction, b: discord.ui.Button):
         if not await _is_admin(self.bot, i):
             await i.response.send_message("Admins only.", ephemeral=True); return
@@ -203,7 +198,7 @@ class AdminPanelView(discord.ui.View):
 
     # Ã¢â€â‚¬Ã¢â€â‚¬ Row 1: Planets Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
-    @discord.ui.button(label="Ã°Å¸ÂªÂ List Planets", style=discord.ButtonStyle.secondary, row=1)
+    @discord.ui.button(label="Select Theatre", style=discord.ButtonStyle.secondary, row=1)
     async def planet_list(self, i: discord.Interaction, b: discord.ui.Button):
         await ensure_guild(i.guild_id)
         pool = await get_pool()
@@ -220,25 +215,25 @@ class AdminPanelView(discord.ui.View):
             for p in planets
         ]
         embed = discord.Embed(
-            title=f"{theme.get('bot_name','WARBOT')} Ã¢â‚¬â€ Planetary Theatres",
-            color=theme.get("color", 0xAA2222),
+            title="REVENANT | System Overview",
+            color=0x34495E,
             description="\n\n".join(lines))
         embed.set_footer(text="> = Active Theatre")
         await i.response.send_message(embed=embed, ephemeral=True)
 
-    @discord.ui.button(label="Ã¢Å¾â€¢ Add Planet", style=discord.ButtonStyle.secondary, row=1)
+    @discord.ui.button(label="Create", style=discord.ButtonStyle.secondary, row=1)
     async def planet_add(self, i: discord.Interaction, b: discord.ui.Button):
         if not await _is_admin(self.bot, i):
             await i.response.send_message("Admins only.", ephemeral=True); return
         await i.response.send_modal(_PlanetAddModal())
 
-    @discord.ui.button(label="Ã°Å¸â€â‚¬ Set Active Planet", style=discord.ButtonStyle.primary, row=1)
+    @discord.ui.button(label="Select Theatre", style=discord.ButtonStyle.primary, row=1)
     async def planet_set_active(self, i: discord.Interaction, b: discord.ui.Button):
         if not await _is_admin(self.bot, i):
             await i.response.send_message("Admins only.", ephemeral=True); return
         await i.response.send_modal(_PlanetSetActiveModal(self.bot))
 
-    @discord.ui.button(label="Ã¢Å“Â Edit Planet", style=discord.ButtonStyle.secondary, row=1)
+    @discord.ui.button(label="Details", style=discord.ButtonStyle.secondary, row=1)
     async def planet_edit(self, i: discord.Interaction, b: discord.ui.Button):
         if not await _is_admin(self.bot, i):
             await i.response.send_message("Admins only.", ephemeral=True); return
@@ -253,26 +248,26 @@ class AdminPanelView(discord.ui.View):
 
     # Ã¢â€â‚¬Ã¢â€â‚¬ Row 2: Theme Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
-    @discord.ui.button(label="Ã°Å¸Å½Â¨ View Theme", style=discord.ButtonStyle.secondary, row=2)
+    @discord.ui.button(label="Details", style=discord.ButtonStyle.secondary, row=2)
     async def theme_view(self, i: discord.Interaction, b: discord.ui.Button):
         await ensure_guild(i.guild_id)
         pool = await get_pool()
         async with pool.acquire() as conn:
             theme = await get_theme(conn, i.guild_id)
         embed = discord.Embed(
-            title="Current Theme",
-            color=theme.get("color", 0xAA2222),
+            title="REVENANT | Setup",
+            color=0x34495E,
             description="\n".join(f"**{k}:** {v}" for k, v in theme.items()))
         await i.response.send_message(embed=embed, ephemeral=True)
 
-    @discord.ui.button(label="Ã¢Å“Â Set Theme", style=discord.ButtonStyle.secondary, row=2)
+    @discord.ui.button(label="Setup", style=discord.ButtonStyle.secondary, row=2)
     async def theme_set(self, i: discord.Interaction, b: discord.ui.Button):
         if not await _is_admin(self.bot, i):
             await i.response.send_message("Admins only.", ephemeral=True); return
         await i.response.send_message(
             "Choose a theme field:", view=_ThemeSetFieldView(i.guild_id), ephemeral=True)
 
-    @discord.ui.button(label="Ã°Å¸â€“Å’ Set Color", style=discord.ButtonStyle.secondary, row=2)
+    @discord.ui.button(label="Setup", style=discord.ButtonStyle.secondary, row=2)
     async def theme_color(self, i: discord.Interaction, b: discord.ui.Button):
         if not await _is_admin(self.bot, i):
             await i.response.send_message("Admins only.", ephemeral=True); return
@@ -285,7 +280,7 @@ class AdminPanelView(discord.ui.View):
         await i.response.send_message(
             "Choose terrain type:", view=_TerrainTypeView(i.guild_id), ephemeral=True)
 
-    @discord.ui.button(label="Ã°Å¸Å½Â² Random Terrain", style=discord.ButtonStyle.secondary, row=2)
+    @discord.ui.button(label="Setup", style=discord.ButtonStyle.secondary, row=2)
     async def map_random_terrain(self, i: discord.Interaction, b: discord.ui.Button):
         if not await _is_admin(self.bot, i):
             await i.response.send_message("Admins only.", ephemeral=True); return
@@ -313,7 +308,7 @@ class AdminPanelView(discord.ui.View):
         await i.followup.send("Terrain generated with clustered tactical biomes.", ephemeral=True)
         await _refresh_public_surfaces(self.bot, i.guild_id)
 
-    @discord.ui.button(label="Ã°Å¸â€Æ’ Reset Terrain", style=discord.ButtonStyle.danger, row=0)
+    @discord.ui.button(label="Reset", style=discord.ButtonStyle.danger, row=0)
     async def map_reset_terrain(self, i: discord.Interaction, b: discord.ui.Button):
         if not await _is_admin(self.bot, i):
             await i.response.send_message("Admins only.", ephemeral=True); return
@@ -328,37 +323,37 @@ class AdminPanelView(discord.ui.View):
 
     # Ã¢â€â‚¬Ã¢â€â‚¬ Row 3: Channels Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
-    @discord.ui.button(label="Ã°Å¸â€œÂ¡ Map Channel", style=discord.ButtonStyle.secondary, row=3)
+    @discord.ui.button(label="Map Channel", style=discord.ButtonStyle.secondary, row=3)
     async def set_map_channel(self, i: discord.Interaction, b: discord.ui.Button):
         if not await _is_admin(self.bot, i):
             await i.response.send_message("Admins only.", ephemeral=True); return
         await i.response.send_modal(_ChannelModal("map_channel_id", "Map Channel ID"))
 
-    @discord.ui.button(label="Ã°Å¸Å’Å’ Overview Channel", style=discord.ButtonStyle.secondary, row=3)
+    @discord.ui.button(label="Overview Channel", style=discord.ButtonStyle.secondary, row=3)
     async def set_overview_channel(self, i: discord.Interaction, b: discord.ui.Button):
         if not await _is_admin(self.bot, i):
             await i.response.send_message("Admins only.", ephemeral=True); return
         await i.response.send_modal(_ChannelModal("overview_channel_id", "Overview Channel ID"))
 
-    @discord.ui.button(label="Ã°Å¸â€œâ€¹ Menu Channel", style=discord.ButtonStyle.secondary, row=3)
+    @discord.ui.button(label="Menu Channel", style=discord.ButtonStyle.secondary, row=3)
     async def set_menu_channel(self, i: discord.Interaction, b: discord.ui.Button):
         if not await _is_admin(self.bot, i):
             await i.response.send_message("Admins only.", ephemeral=True); return
         await i.response.send_modal(_MenuChannelModal())
 
-    @discord.ui.button(label="Ã¢Å¡â€ Enlist Channel", style=discord.ButtonStyle.secondary, row=3)
+    @discord.ui.button(label="Enlist Channel", style=discord.ButtonStyle.secondary, row=3)
     async def set_enlist_channel(self, i: discord.Interaction, b: discord.ui.Button):
         if not await _is_admin(self.bot, i):
             await i.response.send_message("Admins only.", ephemeral=True); return
         await i.response.send_modal(_EnlistChannelModal())
 
-    @discord.ui.button(label="Ã°Å¸â€œÂ¢ Report Channel", style=discord.ButtonStyle.secondary, row=3)
+    @discord.ui.button(label="Report Channel", style=discord.ButtonStyle.secondary, row=3)
     async def set_report_channel(self, i: discord.Interaction, b: discord.ui.Button):
         if not await _is_admin(self.bot, i):
             await i.response.send_message("Admins only.", ephemeral=True); return
         await i.response.send_modal(_ChannelModal("report_channel_id", "Report Channel ID"))
 
-    @discord.ui.button(label="Ã°Å¸â€œÂ£ Announcement Channel", style=discord.ButtonStyle.secondary, row=4)
+    @discord.ui.button(label="Announcement Channel", style=discord.ButtonStyle.secondary, row=4)
     async def set_announcement_channel(self, i: discord.Interaction, b: discord.ui.Button):
         if not await _is_admin(self.bot, i):
             await i.response.send_message("Admins only.", ephemeral=True); return
@@ -366,19 +361,19 @@ class AdminPanelView(discord.ui.View):
 
     # Ã¢â€â‚¬Ã¢â€â‚¬ Row 4: Roles Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
-    @discord.ui.button(label="Ã°Å¸â€ºÂ¡ Admin Role", style=discord.ButtonStyle.secondary, row=4)
+    @discord.ui.button(label="Admin Role", style=discord.ButtonStyle.secondary, row=4)
     async def set_admin_role(self, i: discord.Interaction, b: discord.ui.Button):
         if not _is_owner_only(i):
             await i.response.send_message("Server owner only.", ephemeral=True); return
         await i.response.send_modal(_RoleModal("admin_role_id", "Admin Role ID"))
 
-    @discord.ui.button(label="Ã°Å¸Âªâ€“ Player Role", style=discord.ButtonStyle.secondary, row=4)
+    @discord.ui.button(label="Player Role", style=discord.ButtonStyle.secondary, row=4)
     async def set_player_role(self, i: discord.Interaction, b: discord.ui.Button):
         if not await _is_admin(self.bot, i):
             await i.response.send_message("Admins only.", ephemeral=True); return
         await i.response.send_modal(_RoleModal("player_role_id", "Player Role ID"))
 
-    @discord.ui.button(label="Ã°Å¸Å½Â® GM Role", style=discord.ButtonStyle.secondary, row=4)
+    @discord.ui.button(label="GM Role", style=discord.ButtonStyle.secondary, row=4)
     async def set_gm_role(self, i: discord.Interaction, b: discord.ui.Button):
         if not await _is_admin(self.bot, i):
             await i.response.send_message("Admins only.", ephemeral=True); return
@@ -393,7 +388,7 @@ class AdminPanelView(discord.ui.View):
             view=_AdminCosmeticView(self.bot, i.guild_id),
             ephemeral=True)
 
-    @discord.ui.button(label="Ã¢ÂÂ© Force Turn", style=discord.ButtonStyle.danger, row=0)
+    @discord.ui.button(label="Refresh", style=discord.ButtonStyle.danger, row=0)
     async def force_turn(self, i: discord.Interaction, b: discord.ui.Button):
         if not await _is_admin(self.bot, i):
             await i.response.send_message("Admins only.", ephemeral=True); return
@@ -422,18 +417,17 @@ class AdminPanelView(discord.ui.View):
 # Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
 
 def _gm_panel_embed(theme: dict) -> discord.Embed:
-    return discord.Embed(
-        title=f"Ã°Å¸Å½Â® {theme.get('bot_name', 'WARBOT')} Ã¢â‚¬â€ GM Panel",
-        color=theme.get("color", 0xAA2222),
-        description=(
-            "**Contract Control**\n"
-            "Start Contract Ã‚Â· Pause Contract Ã‚Â· Conclude Contract\n\n"
-            "**Enemy Management**\n"
-            "Spawn, move (single or bulk), list, or remove enemy units.\n\n"
-            "**GM Map** shows ALL unit positions (players + enemies) with labels.\n\n"
-            "All actions are ephemeral Ã¢â‚¬â€ only you can see this panel."
-        ),
-    ).set_footer(text="Game Master controls")
+    return build_revenant_embed(
+        "GM Control Panel",
+        format_section("GM Control Panel", [
+            "**Active Contracts:** Use contract controls by Contract ID.",
+            "**Pending Contracts:** Lock acceptances before fleet assignment.",
+            "**Fleets Available:** Managed through Assign Fleets.",
+            "**Operational Tempo:** Awarded when contracts conclude.",
+            "**Config Status:** GM tools online.",
+        ]),
+        "gm",
+        footer="Game Master controls")
 
 
 class GmPanelView(discord.ui.View):
@@ -458,12 +452,12 @@ class GmPanelView(discord.ui.View):
 
     # Ã¢â€â‚¬Ã¢â€â‚¬ Row 0: Contract Control Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
-    @discord.ui.button(label="Ã¢â€“Â¶ Start Contract", style=discord.ButtonStyle.success, row=0)
+    @discord.ui.button(label="Create Contract", style=discord.ButtonStyle.success, row=0)
     async def start_contract(self, i: discord.Interaction, b: discord.ui.Button):
         if not await self._check(i): return
         await i.response.send_modal(_StartContractModal(self.bot))
 
-    @discord.ui.button(label="Ã¢ÂÂ¸ Pause Contract", style=discord.ButtonStyle.secondary, row=0)
+    @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary, row=0)
     async def pause_contract(self, i: discord.Interaction, b: discord.ui.Button):
         if not await self._check(i): return
         await i.response.send_modal(_PauseContractModal(self.bot))
@@ -485,27 +479,27 @@ class GmPanelView(discord.ui.View):
 
     # Ã¢â€â‚¬Ã¢â€â‚¬ Row 1: Enemy Management Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
-    @discord.ui.button(label="Ã°Å¸â€˜Â¾ Spawn Enemy", style=discord.ButtonStyle.danger, row=1)
+    @discord.ui.button(label="Create", style=discord.ButtonStyle.danger, row=1)
     async def spawn_enemy(self, i: discord.Interaction, b: discord.ui.Button):
         if not await self._check(i): return
         await i.response.send_modal(_SpawnEnemyModal())
 
-    @discord.ui.button(label="Ã°Å¸â€˜Â¾ Bulk Spawn", style=discord.ButtonStyle.danger, row=1)
+    @discord.ui.button(label="Create", style=discord.ButtonStyle.danger, row=1)
     async def bulk_spawn_enemy(self, i: discord.Interaction, b: discord.ui.Button):
         if not await self._check(i): return
         await i.response.send_modal(_BulkSpawnEnemyModal())
 
-    @discord.ui.button(label="Ã¢Å¾Â¡ Move Enemy", style=discord.ButtonStyle.primary, row=2)
+    @discord.ui.button(label="Move", style=discord.ButtonStyle.primary, row=2)
     async def move_enemy(self, i: discord.Interaction, b: discord.ui.Button):
         if not await self._check(i): return
         await i.response.send_modal(_MoveEnemyModal())
 
-    @discord.ui.button(label="Ã°Å¸â€œÂ¦ Bulk Move", style=discord.ButtonStyle.primary, row=2)
+    @discord.ui.button(label="Move", style=discord.ButtonStyle.primary, row=2)
     async def bulk_move_enemy(self, i: discord.Interaction, b: discord.ui.Button):
         if not await self._check(i): return
         await i.response.send_modal(_BulkMoveEnemyModal())
 
-    @discord.ui.button(label="Ã°Å¸â€œâ€¹ List Enemies", style=discord.ButtonStyle.secondary, row=2)
+    @discord.ui.button(label="Intel", style=discord.ButtonStyle.secondary, row=2)
     async def list_enemies(self, i: discord.Interaction, b: discord.ui.Button):
         if not await self._check(i): return
         pool = await get_pool()
@@ -534,19 +528,19 @@ class GmPanelView(discord.ui.View):
             )
         description = "\n".join(lines)
         embed = discord.Embed(
-            title=f"Enemy Units ({len(rows)}) Ã¢â‚¬â€ queued moves shown as Ã¢â€ â€™",
-            color=theme.get("color", 0xAA2222),
+            title="REVENANT | Intel Network",
+            color=0x34495E,
             description=description[:4000])
         await i.response.send_message(embed=embed, ephemeral=True)
 
     # Ã¢â€â‚¬Ã¢â€â‚¬ Row 2: Misc Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
-    @discord.ui.button(label="Ã¢ËœÂ  Remove Enemy", style=discord.ButtonStyle.danger, row=3)
+    @discord.ui.button(label="Remove", style=discord.ButtonStyle.danger, row=3)
     async def remove_enemy(self, i: discord.Interaction, b: discord.ui.Button):
         if not await self._check(i): return
         await i.response.send_modal(_RemoveEnemyModal())
 
-    @discord.ui.button(label="GM Map", style=discord.ButtonStyle.success, row=3)
+    @discord.ui.button(label="View Map", style=discord.ButtonStyle.success, row=3)
     async def gm_map(self, i: discord.Interaction, b: discord.ui.Button):
         if not await self._check(i): return
         await i.response.defer(ephemeral=True, thinking=True)
@@ -557,7 +551,7 @@ class GmPanelView(discord.ui.View):
                 buf = await render_gm_map_for_guild(i.guild_id, conn)
             file = discord.File(buf, filename="gm_map.png")
             embed = discord.Embed(
-                title="GM Map - All Unit Positions",
+                title="REVENANT | Tactical Map",
                 description=(
                     "Ã°Å¸Å¸Â¦ **Blue labels** = player unit names (Ã¢â€ â€™dest if in transit)\n"
                     "Ã°Å¸Å¸Â¥ **Red labels** = enemy units (#ID + type)"
@@ -637,7 +631,7 @@ class _PagedPanelView(discord.ui.View):
     def _embed(self) -> discord.Embed:
         data = self.pages[self.page]
         embed = discord.Embed(
-            title=f"{self.theme.get('bot_name', 'WARBOT')} - {data['title']}",
+            title=f"REVENANT | {data['title'].split(' / ')[-1]}",
             color=self.theme.get("color", 0xAA2222),
             description=data["description"],
         )
@@ -684,7 +678,7 @@ class AdminPanelPagerView(_PagedPanelView):
     def __init__(self, bot, guild_id: int, theme: dict):
         pages = [
             {
-                "title": "Admin Panel / Game",
+                "title": "Setup",
                 "description": "Core contract controls and current war status.",
                 "items": [
                     {"label": "Status", "method": "game_status"},
@@ -694,7 +688,7 @@ class AdminPanelPagerView(_PagedPanelView):
                 ],
             },
             {
-                "title": "Admin Panel / Planets",
+                "title": "Setup",
                 "description": "Create, edit, remove, and activate contract theatres.",
                 "items": [
                     {"label": "List Planets", "method": "planet_list"},
@@ -705,7 +699,7 @@ class AdminPanelPagerView(_PagedPanelView):
                 ],
             },
             {
-                "title": "Admin Panel / Appearance",
+                "title": "Setup",
                 "description": "Theme, color, terrain, and cosmetic definitions.",
                 "items": [
                     {"label": "View Theme", "method": "theme_view"},
@@ -718,7 +712,7 @@ class AdminPanelPagerView(_PagedPanelView):
                 ],
             },
             {
-                "title": "Admin Panel / Channels & Roles",
+                "title": "Setup",
                 "description": "Route bot output and set staff/player roles.",
                 "items": [
                     {"label": "Map Channel", "method": "set_map_channel"},
@@ -741,7 +735,7 @@ class GmPanelPagerView(_PagedPanelView):
     def __init__(self, bot, guild_id: int, theme: dict):
         pages = [
             {
-                "title": "GM Panel / Contract",
+                "title": "GM Control Panel",
                 "description": "Start, pause, conclude, and inspect the current theatre.",
                 "items": [
                     {"label": "Start Contract", "method": "start_contract", "style": discord.ButtonStyle.success},
@@ -753,7 +747,7 @@ class GmPanelPagerView(_PagedPanelView):
                 ],
             },
             {
-                "title": "GM Panel / Enemies",
+                "title": "Intel Network",
                 "description": "Spawn, move, list, and remove hostile units.",
                 "items": [
                     {"label": "Spawn Enemy", "method": "spawn_enemy", "style": discord.ButtonStyle.danger},
@@ -765,7 +759,7 @@ class GmPanelPagerView(_PagedPanelView):
                 ],
             },
             {
-                "title": "GM Panel / Cosmetics",
+                "title": "Setup",
                 "description": "Grant or revoke player banner and badge cosmetics by Discord ID and cosmetic key.",
                 "items": [
                     {"label": "Grant Banner", "method": "grant_banner", "style": discord.ButtonStyle.primary},
@@ -1456,8 +1450,8 @@ class _StartContractModal(discord.ui.Modal, title="Start Contract"):
             channel = i.guild.get_channel(cfg["announcement_channel_id"])
             if channel:
                 embed = discord.Embed(
-                    title=f"Ã°Å¸â€œÅ“ Contract: {name}",
-                    color=theme.get("color", 0xAA2222),
+                    title=f"REVENANT | Contract Details",
+                    color=0x34495E,
                     description=(
                         f"{desc}\n\n"
                         f"**Planet:** {planet['name'] if planet else 'Ã¢â‚¬â€'}\n"
@@ -1637,7 +1631,7 @@ class _ContractOutcomeModal(discord.ui.Modal, title="Conclude Contract"):
             channel = i.guild.get_channel(cfg["announcement_channel_id"])
             if channel:
                 embed = discord.Embed(
-                    title=f"{icon} {label} Ã¢â‚¬â€ {contract_name}",
+                    title=f"REVENANT | Contract Details",
                     color=0x22AA44 if success else 0xAA2222,
                     description=desc + f"\n\nOperational Tempo +{tempo_gain} -> {tempo_result['tempo']}/{tempo_result['threshold']}",
                 )

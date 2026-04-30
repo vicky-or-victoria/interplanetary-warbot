@@ -1,10 +1,10 @@
 """
-Squadron cog v4 — fully button-driven, no player-facing slash commands.
+Squadron cog v4 â€” fully button-driven, no player-facing slash commands.
 
 Players interact via:
-  - EnlistView (enlistment board)        → brigade picker → deploy modal
-  - UnitPanelView (My Unit button)       → stats + brigade-specific action buttons
-  - MoveDirectionView                    → directional pad (speed-capped per turn)
+  - EnlistView (enlistment board)        â†’ brigade picker â†’ deploy modal
+  - UnitPanelView (My Unit button)       â†’ stats + brigade-specific action buttons
+  - MoveDirectionView                    â†’ directional pad (speed-capped per turn)
 """
 
 import random
@@ -28,35 +28,36 @@ from utils.profiles import (
     ensure_commander_profile,
     grant_default_banner,
 )
+from utils.revenant_ui import build_revenant_embed, format_section, kv
 
 
 def _bar(val: int, length: int = 10, max_val: int = 20) -> str:
     filled = max(0, min(length, int((val / max_val) * length)))
-    return "▓" * filled + "░" * (length - filled)
+    return "â–“" * filled + "â–‘" * (length - filled)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # UNIT PANEL  (opened by "My Unit" button on main menu)
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 async def build_unit_embed(sq, theme: dict, turn_count: int) -> discord.Embed:
     brig = get_brigade(sq["brigade"])
     transit_str = (
-        f"\n⚡ **IN TRANSIT** → `{sq['transit_destination']}` "
+        f"\nâš¡ **IN TRANSIT** â†’ `{sq['transit_destination']}` "
         f"({sq['transit_turns_left']} turn(s) left)"
         if sq["in_transit"] else ""
     )
     flags = []
-    if sq["is_dug_in"]:       flags.append("⛏ Dug In (+4 DEF)")
-    if sq["artillery_armed"]: flags.append("🎯 Artillery Armed")
-    flag_str = "  ·  ".join(flags) + "\n" if flags else ""
+    if sq["is_dug_in"]:       flags.append("â› Dug In (+4 DEF)")
+    if sq["artillery_armed"]: flags.append("ðŸŽ¯ Artillery Armed")
+    flag_str = "  Â·  ".join(flags) + "\n" if flags else ""
 
     hp     = sq["hp"] if "hp" in sq.keys() else 100
     max_hp = 100
     hp_bar = _bar(hp, max_val=max_hp, length=10)
     embed = discord.Embed(
-        title=f"{brig['emoji']} {sq['owner_name']} — {sq['name']}",
-        color=theme.get("color", 0xAA2222),
+        title=f"{brig['emoji']} {sq['owner_name']} â€” {sq['name']}",
+        color=0x34495E,
         description=(
             f"**Brigade:** {brig['name']}\n"
             f"**Position:** `{sq['hex_address']}`{transit_str}\n"
@@ -72,7 +73,7 @@ async def build_unit_embed(sq, theme: dict, turn_count: int) -> discord.Embed:
             f"```"
         ),
     )
-    embed.set_footer(text=f"Turn {turn_count} · {theme.get('flavor_text', '')}")
+    embed.set_footer(text=f"Turn {turn_count} Â· {theme.get('flavor_text', '')}")
     return embed
 
 
@@ -87,26 +88,26 @@ class UnitPanelView(discord.ui.View):
         super().__init__(timeout=300)
         self.guild_id = guild_id
 
-        # Row 0 — always present
+        # Row 0 â€” always present
         move_btn = discord.ui.Button(
-            label="📍 Move", style=discord.ButtonStyle.primary, row=0,
+            label="ðŸ“ Move", style=discord.ButtonStyle.primary, row=0,
             disabled=in_transit or move_exhausted)
         move_btn.callback = self._move
         self.add_item(move_btn)
 
         scav_btn = discord.ui.Button(
-            label="🔍 Scavenge", style=discord.ButtonStyle.secondary, row=0)
+            label="ðŸ” Scavenge", style=discord.ButtonStyle.secondary, row=0)
         scav_btn.callback = self._scavenge
         self.add_item(scav_btn)
 
-        # Row 1 — brigade specials
+        # Row 1 â€” brigade specials
         specials = _brigade_special_buttons(guild_id, brigade)
         for btn in specials:
             self.add_item(btn)
 
-        # Row 2 — misc
+        # Row 2 â€” misc
         list_btn = discord.ui.Button(
-            label="📋 List Units", style=discord.ButtonStyle.secondary, row=2)
+            label="ðŸ“‹ List Units", style=discord.ButtonStyle.secondary, row=2)
         list_btn.callback = self._list_units
         self.add_item(list_btn)
 
@@ -129,7 +130,7 @@ class UnitPanelView(discord.ui.View):
             remaining = max(0, budget - sq["hexes_moved_this_turn"])
             if remaining == 0:
                 await interaction.followup.send(
-                    f"⛔ Movement exhausted for this turn (budget: {budget} hexes).", ephemeral=True); return
+                    f"â›” Movement exhausted for this turn (budget: {budget} hexes).", ephemeral=True); return
             max_s = move_steps(sq["brigade"])
 
             # Render range-only map (no arrow) centred on the unit's current hex
@@ -140,7 +141,7 @@ class UnitPanelView(discord.ui.View):
                     guild_id   = self.guild_id,
                     conn       = conn,
                     from_addr  = sq["hex_address"],
-                    to_addr    = sq["hex_address"],   # same hex — no arrow
+                    to_addr    = sq["hex_address"],   # same hex â€” no arrow
                     unit_name  = sq["name"],
                     planet_id  = planet_id,
                     remaining  = remaining,
@@ -174,30 +175,30 @@ def _brigade_special_buttons(guild_id: int, brigade: str):
 
     if brigade == "infantry":
         btn = discord.ui.Button(
-            label="⛏ Dig In", style=discord.ButtonStyle.secondary, row=1)
+            label="â› Dig In", style=discord.ButtonStyle.secondary, row=1)
         btn.callback = _make_callback(_do_dig_in, guild_id)
         buttons.append(btn)
 
     if brigade == "artillery":
         btn = discord.ui.Button(
-            label="🎯 Artillery Hold", style=discord.ButtonStyle.secondary, row=1)
+            label="ðŸŽ¯ Artillery Hold", style=discord.ButtonStyle.secondary, row=1)
         btn.callback = _make_callback(_do_artillery_hold, guild_id)
         buttons.append(btn)
 
     if brigade == "engineering":
         btn = discord.ui.Button(
-            label="🏗 Fortify", style=discord.ButtonStyle.secondary, row=1)
+            label="ðŸ— Fortify", style=discord.ButtonStyle.secondary, row=1)
         btn.callback = _make_callback(_do_fortify, guild_id)
         buttons.append(btn)
 
         btn2 = discord.ui.Button(
-            label="🔧 Repair Adjacent", style=discord.ButtonStyle.secondary, row=1)
+            label="ðŸ”§ Repair Adjacent", style=discord.ButtonStyle.secondary, row=1)
         btn2.callback = _make_callback(_do_repair, guild_id)
         buttons.append(btn2)
 
     if brigade in ("aerial", "ranger", "special_ops"):
         btn = discord.ui.Button(
-            label="📡 Recon Sweep", style=discord.ButtonStyle.secondary, row=1)
+            label="ðŸ“¡ Recon Sweep", style=discord.ButtonStyle.secondary, row=1)
         btn.callback = _make_callback(_do_recon_sweep, guild_id)
         buttons.append(btn)
 
@@ -211,7 +212,7 @@ def _make_callback(fn, guild_id: int):
     return callback
 
 
-# ── Unit panel builder (called from views/menu.py) ────────────────────────────
+# â”€â”€ Unit panel builder (called from views/menu.py) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async def send_unit_panel(interaction: discord.Interaction, guild_id: int):
     """Build and send the full unit panel as an ephemeral response."""
@@ -239,9 +240,9 @@ async def send_unit_panel(interaction: discord.Interaction, guild_id: int):
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # BRIGADE-SPECIFIC ACTIONS
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 async def _do_scavenge(interaction: discord.Interaction, guild_id: int):
     pool = await get_pool()
@@ -259,7 +260,7 @@ async def _do_scavenge(interaction: discord.Interaction, guild_id: int):
         brig = get_brigade(sq["brigade"])
         if not brig.get("can_scavenge", True):
             await interaction.response.send_message(
-                f"{brig['name']} cannot scavenge — too heavy to forage.", ephemeral=True); return
+                f"{brig['name']} cannot scavenge â€” too heavy to forage.", ephemeral=True); return
         if sq["last_scavenged_turn"] >= turn_count:
             if not can_scavenge_twice(sq["brigade"]):
                 await interaction.response.send_message(
@@ -270,7 +271,7 @@ async def _do_scavenge(interaction: discord.Interaction, guild_id: int):
                 guild_id, second_key)
             if already2:
                 await interaction.response.send_message(
-                    "Rangers can scavenge twice per turn — already used both.", ephemeral=True); return
+                    "Rangers can scavenge twice per turn â€” already used both.", ephemeral=True); return
             await conn.execute(
                 "INSERT INTO enemy_gm_moves (guild_id, planet_id, enemy_unit_id, target_address) "
                 "VALUES ($1,$2,-1,$3) ON CONFLICT DO NOTHING",
@@ -282,7 +283,7 @@ async def _do_scavenge(interaction: discord.Interaction, guild_id: int):
             "UPDATE squadrons SET supply=$1, last_scavenged_turn=$2 WHERE id=$3",
             new_supply, turn_count, sq["id"])
     await interaction.response.send_message(
-        f"🔍 Scavenged **+{gain}** supply → `{new_supply}/20`.", ephemeral=True)
+        f"ðŸ” Scavenged **+{gain}** supply â†’ `{new_supply}/20`.", ephemeral=True)
 
 
 async def _do_dig_in(interaction: discord.Interaction, guild_id: int):
@@ -300,7 +301,7 @@ async def _do_dig_in(interaction: discord.Interaction, guild_id: int):
                 "Only Infantry Brigade can dig in.", ephemeral=True); return
         await conn.execute("UPDATE squadrons SET is_dug_in=TRUE WHERE id=$1", sq["id"])
     await interaction.response.send_message(
-        f"⛏ **{sq['name']}** is dug in. +4 defense until next move.", ephemeral=True)
+        f"â› **{sq['name']}** is dug in. +4 defense until next move.", ephemeral=True)
 
 
 async def _do_artillery_hold(interaction: discord.Interaction, guild_id: int):
@@ -318,7 +319,7 @@ async def _do_artillery_hold(interaction: discord.Interaction, guild_id: int):
                 "Only Artillery Brigade can use this.", ephemeral=True); return
         await conn.execute("UPDATE squadrons SET artillery_armed=TRUE WHERE id=$1", sq["id"])
     await interaction.response.send_message(
-        f"🎯 **{sq['name']}** armed and holding — splash damage fires next combat.", ephemeral=True)
+        f"ðŸŽ¯ **{sq['name']}** armed and holding â€” splash damage fires next combat.", ephemeral=True)
 
 
 async def _do_fortify(interaction: discord.Interaction, guild_id: int):
@@ -340,7 +341,7 @@ async def _do_fortify(interaction: discord.Interaction, guild_id: int):
             ON CONFLICT (guild_id, planet_id, address) DO UPDATE SET terrain='fort'
         """, guild_id, planet_id, sq["hex_address"])
     await interaction.response.send_message(
-        f"🏗 Hex `{sq['hex_address']}` has been **fortified** permanently.", ephemeral=True)
+        f"ðŸ— Hex `{sq['hex_address']}` has been **fortified** permanently.", ephemeral=True)
 
 
 async def _do_repair(interaction: discord.Interaction, guild_id: int):
@@ -372,7 +373,7 @@ async def _do_repair(interaction: discord.Interaction, guild_id: int):
             "No friendly units on adjacent hexes to repair.", ephemeral=True)
     else:
         await interaction.response.send_message(
-            f"🔧 Repaired **{count}** adjacent unit(s) (+4 supply each).", ephemeral=True)
+            f"ðŸ”§ Repaired **{count}** adjacent unit(s) (+4 supply each).", ephemeral=True)
 
 
 async def _do_recon_sweep(interaction: discord.Interaction, guild_id: int):
@@ -398,14 +399,14 @@ async def _do_recon_sweep(interaction: discord.Interaction, guild_id: int):
         found = [e for e in enemies if e["hex_address"] in nearby_keys]
     if not found:
         await interaction.response.send_message(
-            f"📡 Recon sweep complete — no contacts within {radius} hexes.", ephemeral=True)
+            f"ðŸ“¡ Recon sweep complete â€” no contacts within {radius} hexes.", ephemeral=True)
     else:
         lines = [
-            f"`{e['hex_address']}` — {e['unit_type']} (ATK:{e['attack']} DEF:{e['defense']})"
+            f"`{e['hex_address']}` â€” {e['unit_type']} (ATK:{e['attack']} DEF:{e['defense']})"
             for e in found
         ]
         await interaction.response.send_message(
-            f"**📡 Recon — {len(found)} contact(s) within {radius} hexes:**\n" + "\n".join(lines),
+            f"**ðŸ“¡ Recon â€” {len(found)} contact(s) within {radius} hexes:**\n" + "\n".join(lines),
             ephemeral=True)
 
 
@@ -426,18 +427,18 @@ async def _do_list_units(interaction: discord.Interaction, guild_id: int):
         brig = get_brigade(r["brigade"])
         t    = " (transit)" if r["in_transit"] else ""
         lines.append(
-            f"{brig['emoji']} **{r['owner_name']}** — {r['name']} "
+            f"{brig['emoji']} **{r['owner_name']}** â€” {r['name']} "
             f"[{brig['name']}] @ `{r['hex_address']}`{t} SUP:{r['supply']}")
     embed = discord.Embed(
         title=f"Active Units ({len(rows)})",
-        color=theme.get("color", 0xAA2222),
+        color=0x34495E,
         description="\n".join(lines))
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # BRIGADE PICKER  (triggered from EnlistView)
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def brigade_picker_embed(unit_name: str, returning: bool = False) -> discord.Embed:
     lines = []
@@ -448,14 +449,14 @@ def brigade_picker_embed(unit_name: str, returning: bool = False) -> discord.Emb
             f"  {b['description']}\n"
             f"  ATK:{s['attack']} DEF:{s['defense']} SPD:{s['speed']} "
             f"MRL:{s['morale']} SUP:{s['supply']} RCN:{s['recon']}\n"
-            f"  Transit: {b['transit_turns']} turn(s)  ·  "
-            + "  ·  ".join(b["specials"][:2])
+            f"  Transit: {b['transit_turns']} turn(s)  Â·  "
+            + "  Â·  ".join(b["specials"][:2])
         )
     title = f"Deploy Returning Command - {unit_name}" if returning else f"Choose Your Brigade - {unit_name}"
     return discord.Embed(
         title=title,
         description="\n\n".join(lines),
-        color=0xAA2222,
+        color=0x34495E,
     ).set_footer(text="Select your brigade from the dropdown below.")
 
 
@@ -475,7 +476,7 @@ def brigade_picker_embed(unit_name: str, returning: bool = False) -> discord.Emb
             "Select a brigade file for the unit you are creating. These values are "
             "pulled from the same live registry used by Brigade Info."
         ),
-        color=0xAA2222,
+        color=0x34495E,
     )
     for b in BRIGADES.values():
         stats = _brigade_stats_line(b["stats"])
@@ -546,7 +547,7 @@ class DeployModal(discord.ui.Modal, title="Deploy Your Unit"):
             await interaction.response.send_message(
                 f"Invalid hex `{dest}`. Use format `gq,gr` e.g. `3,-2`.", ephemeral=True); return
 
-        # Defer immediately — DB work + map renders can exceed Discord's 3-second window
+        # Defer immediately â€” DB work + map renders can exceed Discord's 3-second window
         await interaction.response.defer(ephemeral=True)
 
         # Guarantee guild_config row exists so active_planet_id is never NULL
@@ -660,8 +661,8 @@ class DeployModal(discord.ui.Modal, title="Deploy Your Unit"):
 
         brig = get_brigade(self.brigade)
         embed = discord.Embed(
-            title=f"Commandant Deployed - {self.unit_name}",
-            color=theme.get("color", 0xAA2222),
+            title="REVENANT | Deployment",
+            color=0x34495E,
             description=(
                 f"**Brigade:** {brig['name']}\n"
                 f"**Deployed at:** `{dest}`\n\n"
@@ -673,15 +674,15 @@ class DeployModal(discord.ui.Modal, title="Deploy Your Unit"):
                 f"  SUP  {_bar(stats['supply'])}  {stats['supply']}\n"
                 f"  RCN  {_bar(stats['recon'])}  {stats['recon']}\n"
                 f"```\n"
-                + "\n".join(f"  · {s}" for s in brig["specials"])
+                + "\n".join(f"  Â· {s}" for s in brig["specials"])
             ),
         )
         await interaction.followup.send(embed=embed, ephemeral=True)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # MOVE PAD
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class ExistingDeployModal(discord.ui.Modal, title="Deploy Existing Unit"):
     destination = discord.ui.TextInput(
@@ -807,8 +808,8 @@ class ExistingDeployModal(discord.ui.Modal, title="Deploy Existing Unit"):
 
         brig = get_brigade(sq["brigade"])
         embed = discord.Embed(
-            title=f"Redeployed - {sq['name']}",
-            color=theme.get("color", 0xAA2222),
+            title="REVENANT | Deployment",
+            color=0x34495E,
             description=(
                 f"**Brigade:** {brig['name']}\n"
                 f"**Deployment Hex:** `{dest}`\n"
@@ -914,8 +915,8 @@ async def open_returning_deploy(interaction: discord.Interaction, contract_id: i
         return
 
     embed = discord.Embed(
-        title=f"{theme.get('bot_name', 'WARBOT')} - Returning Deployment",
-        color=theme.get("color", 0xAA2222),
+        title="REVENANT | Deployment",
+        color=0x34495E,
         description=(
             "Select a rostered unit, then choose its deployment hex. "
             "This places the same unit back on the map for the active contract."
@@ -944,11 +945,11 @@ def _move_embed(hex_addr: str, brigade: str, unit_name: str,
         f"\n**{remaining}/{budget}** hexes remaining this turn"
         if remaining is not None and budget is not None else ""
     )
-    exhausted_note = "\n⛔ **Movement exhausted** — resets next turn." if remaining == 0 else ""
+    exhausted_note = "\nâ›” **Movement exhausted** â€” resets next turn." if remaining == 0 else ""
     return discord.Embed(
-        title=f"📍 Move — {brig['emoji']} {unit_name}",
+        title=f"ðŸ“ Move â€” {brig['emoji']} {unit_name}",
         description=(
-            f"At `{hex_addr}` · {step_note}"
+            f"At `{hex_addr}` Â· {step_note}"
             f"{budget_note}{exhausted_note}\n"
             f"Adjacent: {', '.join(f'`{n}`' for n in nbrs) or 'none'}"
         ),
@@ -969,11 +970,11 @@ class MoveDirectionView(discord.ui.View):
     Layout:
       Row 0: [NW] [N ] [NE]
       Row 1: [SW] [S ] [SE]
-      Row 2: Step selector (Select) — only added when move_steps > 1
-      Row 3: [🚀 Fast Travel]  [✓ Done]
+      Row 2: Step selector (Select) â€” only added when move_steps > 1
+      Row 3: [ðŸš€ Fast Travel]  [âœ“ Done]
 
     When a unit has move_steps > 1 the player can pick how many hexes to
-    traverse in a single press (1 … move_steps) via the Select on row 2.
+    traverse in a single press (1 â€¦ move_steps) via the Select on row 2.
     The selection persists across button presses until they change it.
     """
 
@@ -1004,16 +1005,16 @@ class MoveDirectionView(discord.ui.View):
             if btn is not None:
                 btn.disabled = exhausted
 
-        # ── Step selector (row 2) — only when unit can move more than 1 hex ──
+        # â”€â”€ Step selector (row 2) â€” only when unit can move more than 1 hex â”€â”€
         if max_steps > 1 and not exhausted:
             select = StepSelect(max_steps=max_steps, current=chosen_steps)
             select.row = 2
             self.add_item(select)
 
-    # ── Internal move logic ────────────────────────────────────────────────────
+    # â”€â”€ Internal move logic â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     async def _do_move(self, interaction: discord.Interaction, dir_key: str):
-        # Defer immediately — DB work + map render can exceed Discord's 3-second window.
+        # Defer immediately â€” DB work + map render can exceed Discord's 3-second window.
         # ephemeral=True keeps the response visible only to the player.
         await interaction.response.defer(ephemeral=True)
 
@@ -1038,7 +1039,7 @@ class MoveDirectionView(discord.ui.View):
             remaining = max(0, budget - sq["hexes_moved_this_turn"])
             if remaining <= 0:
                 await interaction.followup.send(
-                    f"⛔ Movement exhausted for this turn (budget: {budget} hexes). Resets next turn.",
+                    f"â›” Movement exhausted for this turn (budget: {budget} hexes). Resets next turn.",
                     ephemeral=True)
                 return
 
@@ -1057,7 +1058,7 @@ class MoveDirectionView(discord.ui.View):
 
             if new_addr == old_addr:
                 await interaction.followup.send(
-                    "Cannot move that direction — grid edge.", ephemeral=True)
+                    "Cannot move that direction â€” grid edge.", ephemeral=True)
                 return
 
             actual_steps = hex_distance(old_addr, new_addr) if new_addr != old_addr else steps
@@ -1122,8 +1123,8 @@ class MoveDirectionView(discord.ui.View):
         else:
             await interaction.followup.send(embed=embed, view=new_view, ephemeral=True)
 
-    # ── Direction buttons ──────────────────────────────────────────────────────
-    # Row 0 — NW  N  NE
+    # â”€â”€ Direction buttons â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # Row 0 â€” NW  N  NE
     @discord.ui.button(label="NW", style=discord.ButtonStyle.secondary, row=0)
     async def nw(self, i, b): await self._do_move(i, "NW")
 
@@ -1133,7 +1134,7 @@ class MoveDirectionView(discord.ui.View):
     @discord.ui.button(label="NE", style=discord.ButtonStyle.secondary, row=0)
     async def ne(self, i, b): await self._do_move(i, "NE")
 
-    # Row 1 — SW  S  SE
+    # Row 1 â€” SW  S  SE
     @discord.ui.button(label="SW", style=discord.ButtonStyle.secondary, row=1)
     async def sw(self, i, b): await self._do_move(i, "SW")
 
@@ -1143,8 +1144,8 @@ class MoveDirectionView(discord.ui.View):
     @discord.ui.button(label="SE", style=discord.ButtonStyle.secondary, row=1)
     async def se(self, i, b): await self._do_move(i, "SE")
 
-    # Row 3 — action buttons (row 2 is reserved for StepSelect when present)
-    @discord.ui.button(label="✓ Done", style=discord.ButtonStyle.success, row=3)
+    # Row 3 â€” action buttons (row 2 is reserved for StepSelect when present)
+    @discord.ui.button(label="âœ“ Done", style=discord.ButtonStyle.success, row=3)
     async def done(self, i, b):
         await i.response.edit_message(
             embed=discord.Embed(description="Movement complete.", color=0x446644),
@@ -1229,7 +1230,7 @@ async def _build_commander_file_embed(conn, guild_id: int, user, theme: dict) ->
 
     embed = discord.Embed(
         title=f"Command File - {user.display_name}",
-        color=theme.get("color", 0xAA2222),
+        color=0x34495E,
         description=(
             f"**Rank:** Commandant\n"
             f"**Status:** {status}\n\n"
@@ -1274,7 +1275,7 @@ def _player_panel_embed(theme: dict) -> discord.Embed:
     bot_name = theme.get("bot_name", "WARBOT")
     return discord.Embed(
         title=f"{bot_name} - Player Panel",
-        color=theme.get("color", 0xAA2222),
+        color=0x34495E,
         description=(
             "**Commandant access granted.**\n"
             "Open your command file or check your current field unit. "
@@ -1283,9 +1284,9 @@ def _player_panel_embed(theme: dict) -> discord.Embed:
     ).set_footer(text=theme.get("flavor_text", "The contract must be fulfilled."))
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# COG (minimal — only registers persistent views on startup)
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# COG (minimal â€” only registers persistent views on startup)
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class SquadronCog(commands.Cog):
     def __init__(self, bot):
@@ -1311,3 +1312,4 @@ async def setup(bot):
     await bot.add_cog(SquadronCog(bot))
     from views.menu import EnlistView
     bot.add_view(EnlistView(guild_id=0))
+

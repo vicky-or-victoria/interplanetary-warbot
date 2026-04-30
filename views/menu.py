@@ -1,5 +1,5 @@
 """
-Views — Victoria-style persistent button command panel.
+Views â€” Victoria-style persistent button command panel.
 All labels are theme-aware. Planet context is always the active planet.
 """
 
@@ -9,11 +9,12 @@ from discord.ui import View, Button
 
 from utils.db import get_pool, get_theme, get_active_planet_id
 from utils.brigades import BRIGADES
+from utils.revenant_ui import build_revenant_embed, format_section, kv, standard_footer
 
 
 def _bar(val: int, length: int = 12) -> str:
     filled = max(0, min(length, int((val / 20) * length)))
-    return "▓" * filled + "░" * (length - filled)
+    return "â–“" * filled + "â–‘" * (length - filled)
 
 
 async def _safe(interaction: discord.Interaction, coro):
@@ -22,48 +23,48 @@ async def _safe(interaction: discord.Interaction, coro):
     except Exception as e:
         try:
             if not interaction.response.is_done():
-                await interaction.response.send_message(f"❌ Error: {e}", ephemeral=True)
+                await interaction.response.send_message(f"âŒ Error: {e}", ephemeral=True)
             else:
-                await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
+                await interaction.followup.send(f"âŒ Error: {e}", ephemeral=True)
         except Exception:
             pass
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # MAIN MENU
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class MainMenuView(View):
     def __init__(self, guild_id: int):
         super().__init__(timeout=None)
         self.guild_id = guild_id
 
-    @discord.ui.button(label="🗺️ View Map",      style=discord.ButtonStyle.primary,   custom_id="menu_map",        row=0)
+    @discord.ui.button(label="View Map",      style=discord.ButtonStyle.primary,   custom_id="menu_map",        row=0)
     async def view_map(self, i: discord.Interaction, b: Button):
         await _safe(i, _send_map(i))
 
-    @discord.ui.button(label="🪐 Planetary System",        style=discord.ButtonStyle.secondary, custom_id="menu_planetary_system",     row=0)
+    @discord.ui.button(label="Intel",        style=discord.ButtonStyle.secondary, custom_id="menu_planetary_system",     row=0)
     async def planetary_system(self, i: discord.Interaction, b: Button):
         await _safe(i, _send_overview(i))
 
-    @discord.ui.button(label="🪖 My Unit",       style=discord.ButtonStyle.primary,   custom_id="menu_my_unit",    row=0)
+    @discord.ui.button(label="Deployment",       style=discord.ButtonStyle.primary,   custom_id="menu_my_unit",    row=0)
     async def my_unit(self, i: discord.Interaction, b: Button):
         await _safe(i, _send_unit_panel(i))
 
-    @discord.ui.button(label="📊 Contract Status", style=discord.ButtonStyle.secondary, custom_id="menu_status",     row=1)
+    @discord.ui.button(label="View Contracts", style=discord.ButtonStyle.secondary, custom_id="menu_status",     row=1)
     async def war_status(self, i: discord.Interaction, b: Button):
         await _safe(i, _send_contract_board(i))
 
-    @discord.ui.button(label="📜 Combat Log",    style=discord.ButtonStyle.secondary, custom_id="menu_log",        row=1)
+    @discord.ui.button(label="Reports",    style=discord.ButtonStyle.secondary, custom_id="menu_log",        row=1)
     async def combat_log(self, i: discord.Interaction, b: Button):
         await _safe(i, _send_combat_log(i))
 
-    @discord.ui.button(label="🏆 Leaderboard",   style=discord.ButtonStyle.secondary, custom_id="menu_leaderboard",row=1)
+    @discord.ui.button(label="Details",   style=discord.ButtonStyle.secondary, custom_id="menu_leaderboard",row=1)
     async def leaderboard(self, i: discord.Interaction, b: Button):
         await _safe(i, _send_leaderboard(i))
 
 
-# ── Map ────────────────────────────────────────────────────────────────────────
+# â”€â”€ Map â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async def _send_map(i: discord.Interaction):
     await i.response.defer(ephemeral=True, thinking=True)
@@ -74,14 +75,16 @@ async def _send_map(i: discord.Interaction):
             from utils.map_render import render_map_for_guild
             buf = await render_map_for_guild(i.guild_id, conn)
             f   = discord.File(buf, filename="warmap.png")
-            embed = discord.Embed(
-                title=f"🗺️ {theme.get('bot_name','WARBOT')} — Tactical Map",
-                color=theme.get("color", 0xAA2222))
+            embed = build_revenant_embed(
+                "Tactical Map",
+                format_section("Map Link", ["**Status:** Live tactical map render attached."]),
+                "info",
+                footer=theme.get("flavor_text", ""))
             embed.set_image(url="attachment://warmap.png")
             embed.set_footer(text=theme.get("flavor_text",""))
             await i.followup.send(embed=embed, file=f, ephemeral=True)
         except Exception as e:
-            await i.followup.send(f"❌ Map render failed: {e}", ephemeral=True)
+            await i.followup.send(f"âŒ Map render failed: {e}", ephemeral=True)
 
 
 async def _send_overview(i: discord.Interaction):
@@ -93,38 +96,39 @@ async def _send_overview(i: discord.Interaction):
             from utils.map_render import render_overview_for_guild
             buf = await render_overview_for_guild(i.guild_id, conn)
             f   = discord.File(buf, filename="overview.png")
-            embed = discord.Embed(
-                title=f"🪐 {theme.get('bot_name','WARBOT')} — Planetary Theatres",
-                color=theme.get("color", 0xAA2222))
+            embed = build_revenant_embed(
+                "System Overview",
+                format_section("System Overview", ["**Status:** Theatre overview image attached."]),
+                "info")
             embed.set_image(url="attachment://overview.png")
             await i.followup.send(embed=embed, file=f, ephemeral=True)
         except Exception as e:
-            await i.followup.send(f"❌ Overview render failed: {e}", ephemeral=True)
+            await i.followup.send(f"âŒ Overview render failed: {e}", ephemeral=True)
 
 
-# ── Unit panel ────────────────────────────────────────────────────────────────
+# â”€â”€ Unit panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async def _send_unit_panel(i: discord.Interaction):
     from cogs.squadron_cog import send_unit_panel
     await send_unit_panel(i, i.guild_id)
 
 
-# ── Unit action sub-panel ─────────────────────────────────────────────────────
+# â”€â”€ Unit action sub-panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class UnitActionView(View):
     def __init__(self, guild_id: int):
         super().__init__(timeout=300)
         self.guild_id = guild_id
 
-    @discord.ui.button(label="📍 Move Unit",       style=discord.ButtonStyle.primary,   custom_id="unit_action_move")
+    @discord.ui.button(label="Move",       style=discord.ButtonStyle.primary,   custom_id="unit_action_move")
     async def move_unit(self, i: discord.Interaction, b: Button):
         await i.response.send_modal(MoveModal(self.guild_id))
 
-    @discord.ui.button(label="🔍 Scavenge Supply", style=discord.ButtonStyle.secondary, custom_id="unit_action_scavenge")
+    @discord.ui.button(label="Intel", style=discord.ButtonStyle.secondary, custom_id="unit_action_scavenge")
     async def scavenge(self, i: discord.Interaction, b: Button):
         await _safe(i, _do_scavenge(i, self.guild_id))
 
-    @discord.ui.button(label="← Back",             style=discord.ButtonStyle.secondary, custom_id="unit_action_back")
+    @discord.ui.button(label="Back",             style=discord.ButtonStyle.secondary, custom_id="unit_action_back")
     async def back(self, i: discord.Interaction, b: Button):
         pool = await get_pool()
         async with pool.acquire() as conn:
@@ -133,7 +137,7 @@ class UnitActionView(View):
         await i.response.edit_message(embed=embed, view=MainMenuView(self.guild_id))
 
 
-# ── Move modal ────────────────────────────────────────────────────────────────
+# â”€â”€ Move modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class MoveModal(discord.ui.Modal, title="Move Unit"):
     destination = discord.ui.TextInput(
@@ -150,7 +154,7 @@ class MoveModal(discord.ui.Modal, title="Move Unit"):
         from utils.hexmap import is_valid, hex_distance
         if not is_valid(dest):
             await i.response.send_message(
-                "❌ Invalid hex. Use format `gq,gr` e.g. `3,-2`.", ephemeral=True); return
+                "âŒ Invalid hex. Use format `gq,gr` e.g. `3,-2`.", ephemeral=True); return
         pool = await get_pool()
         async with pool.acquire() as conn:
             theme     = await get_theme(conn, self.guild_id)
@@ -172,17 +176,17 @@ class MoveModal(discord.ui.Modal, title="Move Unit"):
             remaining = max(0, budget - sq["hexes_moved_this_turn"])
             if dist > remaining:
                 await i.response.send_message(
-                    f"❌ That hex is **{dist}** away but you only have "
+                    f"âŒ That hex is **{dist}** away but you only have "
                     f"**{remaining}/{budget}** hexes remaining this turn.", ephemeral=True); return
 
             await conn.execute(
                 "UPDATE squadrons SET hex_address=$1, is_dug_in=FALSE, "
                 "hexes_moved_this_turn=hexes_moved_this_turn+$2 WHERE id=$3",
                 dest, dist, sq["id"])
-            await i.response.send_message(f"✅ Moved to `{dest}`.", ephemeral=True)
+            await i.response.send_message(f"âœ… Moved to `{dest}`.", ephemeral=True)
 
 
-# ── Scavenge ──────────────────────────────────────────────────────────────────
+# â”€â”€ Scavenge â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async def _do_scavenge(i: discord.Interaction, guild_id: int):
     pool = await get_pool()
@@ -206,7 +210,7 @@ async def _do_scavenge(i: discord.Interaction, guild_id: int):
             "UPDATE squadrons SET supply=$1, last_scavenged_turn=$2 WHERE id=$3",
             new_supply, turn_count, sq["id"])
     await i.response.send_message(
-        f"🔍 Scavenged **+{gain}** supply → `{new_supply}/20`.", ephemeral=True)
+        f"ðŸ” Scavenged **+{gain}** supply â†’ `{new_supply}/20`.", ephemeral=True)
 
 
 
@@ -239,24 +243,38 @@ async def fetch_board_contracts(conn, guild_id: int, limit: int = 25):
 
 
 def build_contract_board_embed(theme: dict, rows, selected_id: int = None) -> discord.Embed:
-    lines = []
-    if False:
-        marker = ">" if selected_id == c["id"] else " "
-        capacity = c["deployment_capacity"] or 0
-        deployed = c["deployed_units"] or 0
-        fleets = c["fleet_count"] or 0
-        accepted = c.get("accepted_count", 0) if hasattr(c, "get") else c["accepted_count"]
-        lines.append(
-            f"{marker} **CONTRACT #{c['id']:03d}: {c['title']}**\n"
-            f"Planet: {c['planet_system']} | Enemy: {c['enemy']}\n"
-            f"Status: {c['status']} | Accepted: {accepted}\n"
-            f"Fleets Assigned: {fleets} | Units Deployed: {deployed}/{capacity}\n"
-        )
-    return discord.Embed(
-        title="Contract Board",
-        color=theme.get("color", 0xAA2222),
-        description=("\n".join(lines)[:3900] if lines else "No contracts on the board yet."),
-    )
+    selected = None
+    if rows:
+        selected = next((c for c in rows if c["id"] == selected_id), rows[0])
+    if not selected:
+        return build_revenant_embed(
+            "Contract Board",
+            format_section("Contract Board", ["No contracts on the board yet."]),
+            "warning")
+
+    try:
+        accepted = selected["accepted_count"]
+    except (KeyError, IndexError):
+        accepted = 0
+    capacity = selected["deployment_capacity"] or 0
+    deployed = selected["deployed_units"] or 0
+    summary = [
+        kv("Contract", f"#{selected['id']:03d} {selected['title']}"),
+        kv("Enemy", selected["enemy"]),
+        kv("Status", selected["status"]),
+        kv("Difficulty", selected["difficulty"]),
+        kv("Fleets Assigned", selected["fleet_count"] or 0),
+        kv("Deployment Capacity", f"{deployed}/{capacity}"),
+        kv("Accepted Players", accepted),
+    ]
+    queue = [
+        f"#{c['id']:03d} {c['title']} - {c['status']}"
+        for c in rows[:10]
+    ]
+    return build_revenant_embed(
+        "Contract Board",
+        f"{format_section('Selected Contract', summary)}\n\n{format_section('Board Queue', queue)}",
+        "info")
 
 
 class ContractSelect(discord.ui.Select):
@@ -293,7 +311,7 @@ class ContractBoardView(View):
         if rows:
             self.add_item(ContractSelect(rows, selected_id))
 
-    @discord.ui.button(label="View", style=discord.ButtonStyle.secondary, row=0)
+    @discord.ui.button(label="Refresh", style=discord.ButtonStyle.secondary, row=2)
     async def view_contract(self,i,b):
         await _send_contract_board(i)
 
@@ -325,15 +343,8 @@ class ContractBoardView(View):
             await conn.execute("DELETE FROM contract_acceptances WHERE guild_id=$1 AND contract_id=$2 AND player_id=$3", i.guild_id, c['id'], i.user.id)
         await i.response.send_message(f"Withdrawn from contract #{c['id']:03d}.",ephemeral=True)
 
-    @discord.ui.button(label="Deploy Roster", style=discord.ButtonStyle.primary, row=0)
+    @discord.ui.button(label="Deploy", style=discord.ButtonStyle.primary, row=0)
     async def deploy_contract(self,i,b):
-        if not self.selected_id:
-            await i.response.send_message("Select a contract first.", ephemeral=True); return
-        from cogs.squadron_cog import open_returning_deploy
-        await open_returning_deploy(i, self.selected_id)
-
-    @discord.ui.button(label="New Unit", style=discord.ButtonStyle.success, row=1)
-    async def new_unit_contract(self,i,b):
         if not self.selected_id:
             await i.response.send_message("Select a contract first.", ephemeral=True); return
         pool = await get_pool()
@@ -342,9 +353,71 @@ class ContractBoardView(View):
             accepted = await conn.fetchval(
                 "SELECT 1 FROM contract_acceptances WHERE guild_id=$1 AND contract_id=$2 AND player_id=$3",
                 i.guild_id, self.selected_id, i.user.id)
+            roster_count = await conn.fetchval(
+                "SELECT COUNT(*) FROM squadrons WHERE guild_id=$1 AND owner_id=$2 AND is_active=FALSE",
+                i.guild_id, i.user.id) or 0
         if not c or c["status"] not in DEPLOYABLE_STATUSES or not accepted:
             await i.response.send_message("Select an accepted, fleet-assigned deployable contract first.", ephemeral=True); return
-        await i.response.send_modal(_UnitNameModal(i.guild_id, False, self.selected_id))
+        if roster_count == 0:
+            await i.response.send_modal(_UnitNameModal(i.guild_id, False, self.selected_id)); return
+        from cogs.squadron_cog import open_returning_deploy
+        await open_returning_deploy(i, self.selected_id)
+
+    @discord.ui.button(label="Details", style=discord.ButtonStyle.secondary, row=1)
+    async def new_unit_contract(self,i,b):
+        if not self.selected_id:
+            await i.response.send_message("Select a contract first.", ephemeral=True); return
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            theme = await get_theme(conn, i.guild_id)
+            c = await fetch_contract(conn, i.guild_id, self.selected_id)
+            accepted = await conn.fetchval(
+                "SELECT COUNT(*) FROM contract_acceptances WHERE guild_id=$1 AND contract_id=$2",
+                i.guild_id, self.selected_id) or 0
+        if not c:
+            await i.response.send_message("Contract not found.", ephemeral=True); return
+        desc = format_section("Contract Details", [
+            kv("Contract", f"#{c['id']:03d} {c['title']}"),
+            kv("Location", c["planet_system"]),
+            kv("Enemy", c["enemy"]),
+            kv("Difficulty", c["difficulty"]),
+            kv("Status", c["status"]),
+            kv("Fleets Assigned", c["fleet_count"] or 0),
+            kv("Deployment Capacity", f"{c['deployed_units'] or 0}/{c['deployment_capacity'] or 0}"),
+            kv("Accepted Players", accepted),
+            "",
+            "**Mission Briefing:**",
+            c["description"] or "No briefing filed.",
+        ])
+        await i.response.send_message(
+            embed=build_revenant_embed("Contract Details", desc, "info"),
+            view=ContractBoardView(i.guild_id, [c], c["id"]),
+            ephemeral=True)
+
+    @discord.ui.button(label="Participants", style=discord.ButtonStyle.secondary, row=1)
+    async def participants(self, i: discord.Interaction, b: Button):
+        if not self.selected_id:
+            await i.response.send_message("Select a contract first.", ephemeral=True); return
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT player_id FROM contract_acceptances WHERE guild_id=$1 AND contract_id=$2 ORDER BY accepted_at",
+                i.guild_id, self.selected_id)
+        lines = [f"<@{r['player_id']}>" for r in rows] or ["No accepted players yet."]
+        await i.response.send_message(
+            embed=build_revenant_embed("Contract Details", format_section("Accepted Players", lines), "info"),
+            ephemeral=True)
+
+    @discord.ui.button(label="Home", style=discord.ButtonStyle.secondary, row=2)
+    async def home(self, i: discord.Interaction, b: Button):
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            theme = await get_theme(conn, self.guild_id)
+            embed = await build_menu_embed(self.guild_id, conn, theme)
+        if i.response.is_done():
+            await i.followup.send(embed=embed, view=MainMenuView(self.guild_id), ephemeral=True)
+        else:
+            await i.response.send_message(embed=embed, view=MainMenuView(self.guild_id), ephemeral=True)
 
 
 async def _send_contract_board(i: discord.Interaction):
@@ -355,13 +428,11 @@ async def _send_contract_board(i: discord.Interaction):
     if not rows:
         await i.response.send_message("No contracts on the board yet.",ephemeral=True); return
     selected_id = rows[0]["id"]
-    for c in []:
-        lines.append(f"**CONTRACT #{c['id']:03d} — {c['title']}**\nFleets: {c['fleet_count']}\nCapacity: {c['deployment_capacity']} units\nStatus: {c['status']}\n")
     embed=build_contract_board_embed(theme, rows, selected_id)
     await i.response.send_message(embed=embed, view=ContractBoardView(i.guild_id, rows, selected_id), ephemeral=True)
 
 
-# ── War status ────────────────────────────────────────────────────────────────
+# â”€â”€ War status â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async def _send_war_status(i: discord.Interaction):
     pool = await get_pool()
@@ -390,26 +461,24 @@ async def _send_war_status(i: discord.Interaction):
             "WHERE guild_id=$1 AND planet_id=$2 GROUP BY status",
             i.guild_id, planet_id)
 
-    contract_name = (cfg["contract_name"] if cfg and cfg["contract_name"] else "Unassigned")
-    embed = discord.Embed(
-        title=f"📊 {theme.get('bot_name','WARBOT')} — Contract: {contract_name}",
-        color=theme.get("color", 0xAA2222),
-        description=(
-            f"**State:** {'🟢 Active' if cfg and cfg['game_started'] else '🔴 Paused'} "
-            f"· Turn **{turns}** · Every **{cfg['turn_interval_hours'] if cfg else '?'}h**\n"
-            f"**Planet:** {planet['name'] if planet else '—'} "
-            f"· Contractor: {planet['contractor'] if planet else '—'}\n"
-            f"**Enemy:** {planet['enemy_type'] if planet else '—'}\n**Fleets Available:** {cfg['fleet_pool_available'] if cfg else 0}\n**Operational Tempo:** {cfg['operational_tempo'] if cfg else 0}/{cfg['tempo_threshold'] if cfg else 500}\n\n"
-            f"**{theme.get('player_faction','PMC')}:** {p_count} units\n"
-            f"**{theme.get('enemy_faction','Enemy')}:** {e_count} units\n\n"
-            f"**Sector Control:**\n" +
-            "\n".join(f"  `{r['status']}`: {r['cnt']}" for r in hex_s) or "*No data.*"
-        ),
-    )
+    status_lines = [
+        kv("Active Theatre", planet["name"] if planet else "Unknown"),
+        kv("Contractor", planet["contractor"] if planet else "Unknown"),
+        kv("Enemy", planet["enemy_type"] if planet else "Unknown"),
+        kv("Turn", turns),
+        kv("Status", "Active" if cfg and cfg["game_started"] else "Paused"),
+        kv("Operational Tempo", f"{cfg['operational_tempo'] if cfg else 0}/{cfg['tempo_threshold'] if cfg else 500}"),
+        kv("Fleets Available", cfg["fleet_pool_available"] if cfg else 0),
+    ]
+    sector_lines = [f"`{r['status']}`: {r['cnt']}" for r in hex_s] or ["No data."]
+    embed = build_revenant_embed(
+        "System Overview",
+        f"{format_section('System Overview', status_lines)}\n\n{format_section('Sector Control', sector_lines)}",
+        "info")
     await i.response.send_message(embed=embed, ephemeral=True)
 
 
-# ── Combat log ────────────────────────────────────────────────────────────────
+# â”€â”€ Combat log â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async def _send_combat_log(i: discord.Interaction):
     pool = await get_pool()
@@ -426,18 +495,15 @@ async def _send_combat_log(i: discord.Interaction):
         await i.response.send_message("No combat recorded yet.", ephemeral=True); return
     lines = []
     for e in entries:
-        icon = {"attacker_wins":"🟢","defender_wins":"🔴","draw":"🟡"}.get(e["outcome"],"⬜")
+        icon = {"attacker_wins":"ðŸŸ¢","defender_wins":"ðŸ”´","draw":"ðŸŸ¡"}.get(e["outcome"],"â¬œ")
         lines.append(
-            f"{icon} T{e['turn_number']} `{e['hex_address']}` — "
+            f"{icon} T{e['turn_number']} `{e['hex_address']}` â€” "
             f"{e['attacker']} vs {e['defender']} ({e['attacker_roll']} vs {e['defender_roll']})")
-    embed = discord.Embed(
-        title="📜 Recent Combat",
-        color=theme.get("color", 0xAA2222),
-        description="\n".join(lines))
+    embed = build_revenant_embed("Intel Network", format_section("Recent Reports", lines), "warning")
     await i.response.send_message(embed=embed, ephemeral=True)
 
 
-# ── Leaderboard ───────────────────────────────────────────────────────────────
+# â”€â”€ Leaderboard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async def _send_leaderboard(i: discord.Interaction):
     pool = await get_pool()
@@ -451,16 +517,13 @@ async def _send_leaderboard(i: discord.Interaction):
             i.guild_id, planet_id)
     if not rows:
         await i.response.send_message("No units enlisted yet.", ephemeral=True); return
-    lines = [f"**{n+1}.** {r['owner_name']} — {r['name']} · Power {r['power']}"
+    lines = [f"**{n+1}.** {r['owner_name']} â€” {r['name']} Â· Power {r['power']}"
              for n, r in enumerate(rows)]
-    embed = discord.Embed(
-        title=f"🏆 {theme.get('player_faction','PMC')} Leaderboard",
-        color=theme.get("color", 0xAA2222),
-        description="\n".join(lines))
+    embed = build_revenant_embed("Intel Network", format_section("Recent Reports", lines), "info")
     await i.response.send_message(embed=embed, ephemeral=True)
 
 
-# ── Menu embed builder ────────────────────────────────────────────────────────
+# â”€â”€ Menu embed builder â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async def build_menu_embed(guild_id: int, conn, theme: dict = None) -> discord.Embed:
     if theme is None:
@@ -495,26 +558,29 @@ async def build_menu_embed(guild_id: int, conn, theme: dict = None) -> discord.E
 
     state = "ACTIVE" if cfg and cfg["game_started"] else "PAUSED"
     contract_name = (cfg["contract_name"] if cfg and cfg["contract_name"] else "Unassigned")
-    desc  = (
-        f"```\n"
-        f"  {theme.get('bot_name','WARBOT')}  ·  COMMAND CENTRE\n"
-        f"  {'═'*40}\n"
-        f"  Contract:    {contract_name}\n"
-        f"  Planet:      {planet['name'] if planet else '—'}\n"
-        f"  Contractor:  {planet['contractor'] if planet else '—'}\n"
-        f"  Enemy:       {planet['enemy_type'] if planet else '—'}\n"
-        f"  Status:      {state}  ·  Turn {turn_count}\n  Fleets:      {cfg['fleet_pool_available'] if cfg else 0} available\n  Operational Tempo: {cfg['operational_tempo'] if cfg else 0}/{cfg['tempo_threshold'] if cfg else 500}\n"
-        f"```"
-        f"\n**FRONT LINE REPORT**\n\n"
-        f"  🔵  {theme.get('player_faction','PMC')}: **{p_count}** units · "
-        f"**{p_hexes}** sectors held\n"
-        f"  🔴  {theme.get('enemy_faction','Enemy')}: **{e_count}** units · "
-        f"**{e_hexes}** sectors held\n\n"
-        f"*{theme.get('flavor_text','')}*"
-    )
-    embed = discord.Embed(description=desc, color=theme.get("color", 0xAA2222))
-    embed.set_footer(text=f"{theme.get('bot_name','WARBOT')} — Use the buttons below.")
-    return embed
+    active_contracts = await conn.fetchval(
+        "SELECT COUNT(*) FROM contracts WHERE guild_id=$1 AND status IN ('deployable','active')",
+        guild_id) or 0
+    pending_contracts = await conn.fetchval(
+        "SELECT COUNT(*) FROM contracts WHERE guild_id=$1 AND status IN ('open','accepting','locked')",
+        guild_id) or 0
+    overview_lines = [
+        kv("Active Theatre", planet["name"] if planet else "Unknown"),
+        kv("Contractor", planet["contractor"] if planet else "Unknown"),
+        kv("Enemy", planet["enemy_type"] if planet else "Unknown"),
+        kv("Turn", turn_count),
+        kv("Operational Tempo", f"{cfg['operational_tempo'] if cfg else 0}/{cfg['tempo_threshold'] if cfg else 500}"),
+        kv("Fleets Available", cfg["fleet_pool_available"] if cfg else 0),
+        kv("Active Contracts", active_contracts),
+        kv("Pending Contracts", pending_contracts),
+    ]
+    front_lines = [
+        kv(theme.get("player_faction", "PMC"), f"{p_count} units | {p_hexes} sectors held"),
+        kv(theme.get("enemy_faction", "Enemy"), f"{e_count} units | {e_hexes} sectors held"),
+        kv("Status", state),
+    ]
+    desc = f"{format_section('System Overview', overview_lines)}\n\n{format_section('Front Line', front_lines)}"
+    return build_revenant_embed("System Overview", desc, "info", footer=theme.get("flavor_text", ""))
 
 
 async def update_menu_embed(bot, guild_id: int, conn):
@@ -535,9 +601,9 @@ async def update_menu_embed(bot, guild_id: int, conn):
         logging.getLogger(__name__).warning(f"Menu embed update failed: {e}")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # ENLISTMENT BOARD
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def _brigade_stats_line(stats: dict) -> str:
     return (
@@ -559,7 +625,7 @@ def _brigade_brief_lines() -> list[str]:
 
 def _build_brigade_dossier_embed(theme: dict) -> discord.Embed:
     embed = discord.Embed(
-        title=f"{theme.get('bot_name', 'WARBOT')} - Brigade Dossier",
+        title="REVENANT | Deployment",
         color=theme.get("color", 0xAA2222),
         description=(
             "These entries are generated from the live brigade registry, so the "
@@ -600,7 +666,7 @@ def build_enlist_embed(theme: dict, planet_name: str, contractor: str,
         f"*{theme.get('flavor_text', 'The contract must be fulfilled.')}*"
     )
     embed = discord.Embed(
-        title=f"{bot_name} - Enlistment Board",
+        title="REVENANT | Deployment",
         description=desc,
         color=color,
     )
