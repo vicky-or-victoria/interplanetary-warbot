@@ -1,5 +1,5 @@
 """
-Warbot — Turn Engine v3
+Warbot â€” Turn Engine v3
 Brigade-aware, flat hex system, no FOB concept.
 
 Each turn:
@@ -224,7 +224,7 @@ def _build_turn_report_embeds(planet_name: str, turn_num: int, summaries: list, 
     )
 
     embed = discord.Embed(
-        title=f"{bot_name} | Turn {turn_num} After Action Report",
+        title=f"REVENANT | Intel Network",
         color=color,
         description=description,
     )
@@ -259,7 +259,7 @@ def _turn_report_summary_embed(planet_name: str, turn_num: int, summaries: list,
         f"**Signal Integrity:** {signal}"
     )
     embed = discord.Embed(
-        title=f"{bot_name} | Turn {turn_num} After Action Report",
+        title=f"REVENANT | Intel Network",
         color=color,
         description=description,
     )
@@ -279,7 +279,7 @@ def _build_report_detail_embeds(
     color = theme.get("color", 0xAA2222)
     sections = _section_report_lines(summaries)
     embed = discord.Embed(
-        title=f"{bot_name} | Turn {turn_num} {detail_title}",
+        title=f"REVENANT | Intel Network",
         color=color,
         description=f"Contract Theatre: **{planet_name}**",
     )
@@ -457,7 +457,7 @@ class TurnEngine:
         except Exception as e:
             log.warning(f"public panel refresh: {e}")
 
-        # Clear persisted player movement arrows — new turn = blank slate
+        # Clear persisted player movement arrows; new turn = blank slate.
         try:
             pool = await get_pool()
             async with pool.acquire() as conn:
@@ -467,7 +467,7 @@ class TurnEngine:
         except Exception as e:
             log.warning(f"movement_arrows clear: {e}")
 
-    # ── Transit ───────────────────────────────────────────────────────────────
+    # â”€â”€ Transit â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     async def _transit(self, conn, guild_id, planet_id, summaries, theme, movement_arrows):
         rows = await conn.fetch(
@@ -487,7 +487,7 @@ class TurnEngine:
                     "transit_destination=NULL, transit_turns_left=0 WHERE id=$2",
                     dest, sq["id"])
                 summaries.append(
-                    f"✅ **{sq['owner_name']}'s {sq['name']}** ({ul}) "
+                    f"READY **{sq['owner_name']}'s {sq['name']}** ({ul}) "
                     f"arrived at `{dest}`.")
             else:
                 # Step one hex closer each turn
@@ -498,7 +498,7 @@ class TurnEngine:
                     "UPDATE squadrons SET hex_address=$1, transit_turns_left=$2 WHERE id=$3",
                     next_hex, turns_left, sq["id"])
 
-    # ── GM moves ──────────────────────────────────────────────────────────────
+    # â”€â”€ GM moves â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     async def _gm_moves(self, conn, guild_id, planet_id, summaries, theme):
         moves = await conn.fetch(
@@ -511,13 +511,13 @@ class TurnEngine:
                 "UPDATE enemy_units SET hex_address=$1, manually_moved=TRUE WHERE id=$2",
                 m["target_address"], m["enemy_unit_id"])
             summaries.append(
-                f"🎮 **{theme.get('enemy_unit','Enemy')} [{m['unit_type']}]** "
+                f"ðŸŽ® **{theme.get('enemy_unit','Enemy')} [{m['unit_type']}]** "
                 f"moved to `{m['target_address']}` (GM).")
 
-    # ── Enemy AI ──────────────────────────────────────────────────────────────
+    # â”€â”€ Enemy AI â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     async def _enemy_ai(self, conn, guild_id, planet_id, summaries, theme, enemy_type, movement_arrows):
-        # AI spawning has been removed — only GMs may spawn enemy units.
+                # AI spawning has been removed; only GMs may spawn enemy units.
         # Existing units (not GM-moved this turn) move toward player positions automatically.
         units = await conn.fetch(
             "SELECT id, hex_address FROM enemy_units "
@@ -544,7 +544,7 @@ class TurnEngine:
                     "UPDATE enemy_units SET hex_address=$1 WHERE id=$2",
                     target, unit["id"])
 
-    # ── Combat ────────────────────────────────────────────────────────────────
+    # â”€â”€ Combat â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     async def _combat(self, conn, guild_id, planet_id, turn_num,
                        summaries, theme, enemy_type, movement_arrows):
@@ -580,7 +580,7 @@ class TurnEngine:
             def avg(stat):
                 return sum(u[stat] for u in p_units) // len(p_units)
 
-            # Representative brigade — use the first unit's brigade
+            # Representative brigade â€” use the first unit's brigade
             rep_brigade = p_units[0]["brigade"] if p_units else "infantry"
 
             # Fetch current HP for all player units fresh from DB
@@ -658,9 +658,9 @@ class TurnEngine:
                     guild_id, planet_id, turn_num, hex_addr,
                     result.attacker, result.defender,
                     result.attacker_roll, result.defender_roll, result.outcome)
-                summaries.append(f"⚔ **{hex_addr}**: {result.narrative}")
+                summaries.append(f"COMBAT **{hex_addr}**: {result.narrative}")
 
-                # ── Apply HP damage to enemy ──────────────────────────────────
+                # â”€â”€ Apply HP damage to enemy â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 if result.defender_damage > 0:
                     new_enemy_hp = max(0, cur_enemy_hp - result.defender_damage)
                     if new_enemy_hp <= 0:
@@ -668,15 +668,15 @@ class TurnEngine:
                             "UPDATE enemy_units SET hp=0, is_active=FALSE WHERE id=$1",
                             e["id"])
                         summaries.append(
-                            f"💀 **{el} [{e['unit_type']}]** was **destroyed** at `{hex_addr}`.")
+                            f"ðŸ’€ **{el} [{e['unit_type']}]** was **destroyed** at `{hex_addr}`.")
                     else:
                         await conn.execute(
                             "UPDATE enemy_units SET hp=$1 WHERE id=$2",
                             new_enemy_hp, e["id"])
                         summaries.append(
-                            f"🩸 **{el} [{e['unit_type']}]** `{new_enemy_hp} HP` remaining.")
+                            f"ðŸ©¸ **{el} [{e['unit_type']}]** `{new_enemy_hp} HP` remaining.")
 
-                # ── Apply HP damage to player units ───────────────────────────
+                # â”€â”€ Apply HP damage to player units â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 if result.attacker_damage > 0:
                     active_stack = [pu for pu in p_units if p_hp_map.get(pu["id"], 0) > 0]
                     stack_size = max(1, len(active_stack))
@@ -698,14 +698,14 @@ class TurnEngine:
                             await mark_recovering(
                                 conn, guild_id, pu["owner_id"], pu["owner_name"])
                             summaries.append(
-                                f"💀 **{pu['owner_name']}'s {pu['name']}** was **destroyed** "
-                                f"— their command is recovering from total loss of unit cohesion.")
+                                f"ðŸ’€ **{pu['owner_name']}'s {pu['name']}** was **destroyed** "
+                                f"- their command is recovering from total loss of unit cohesion.")
                         else:
                             await conn.execute(
                                 "UPDATE squadrons SET hp=$1 WHERE id=$2",
                                 new_hp, pu["id"])
                             summaries.append(
-                                f"💔 **{pu['owner_name']}'s {pu['name']}** took "
+                                f"ðŸ’” **{pu['owner_name']}'s {pu['name']}** took "
                                 f"**{assigned_damage} stack damage** (`{new_hp} HP` remaining).")
 
                 # Determine hex control and routing.
@@ -750,7 +750,7 @@ class TurnEngine:
                     final_ctrl = "neutral"
                     fatigue   += 1
 
-                # Artillery splash damage — deal fixed 10 HP to splashed enemy units
+                # Artillery splash damage â€” deal fixed 10 HP to splashed enemy units
                 if result.splash_hexes:
                     for sh in result.splash_hexes:
                         splash_rows = await conn.fetch(
@@ -764,13 +764,13 @@ class TurnEngine:
                                     "UPDATE enemy_units SET hp=0, is_active=FALSE WHERE id=$1",
                                     sr["id"])
                                 summaries.append(
-                                    f"💥 Artillery splash destroyed **{el} [{sr['unit_type']}]** at `{sh}`.")
+                                    f"ðŸ’¥ Artillery splash destroyed **{el} [{sr['unit_type']}]** at `{sh}`.")
                             else:
                                 await conn.execute(
                                     "UPDATE enemy_units SET hp=$1 WHERE id=$2",
                                     splash_new_hp, sr["id"])
                                 summaries.append(
-                                    f"💥 Artillery splash hit **{el} [{sr['unit_type']}]** at `{sh}` "
+                                    f"ðŸ’¥ Artillery splash hit **{el} [{sr['unit_type']}]** at `{sh}` "
                                     f"(`{splash_new_hp} HP` remaining).")
 
             await conn.execute(
@@ -801,9 +801,9 @@ class TurnEngine:
                             retreat, sq["id"])
                     movement_arrows.append((hex_addr, retreat, "player"))
                     summaries.append(
-                        f"🔙 **{pl}** routed from `{hex_addr}` → fell back to `{retreat}`.")
+                        f"RETREAT **{pl}** routed from `{hex_addr}` -> fell back to `{retreat}`.")
 
-    # ── Supply drain ──────────────────────────────────────────────────────────
+    # â”€â”€ Supply drain â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     async def _supply(self, conn, guild_id, planet_id, summaries, theme):
         ul   = theme.get("player_unit", "Unit")
@@ -818,10 +818,10 @@ class TurnEngine:
                 "UPDATE squadrons SET supply=$1 WHERE id=$2", new_supply, sq["id"])
             if new_supply <= 3:
                 summaries.append(
-                    f"⚠ **{sq['owner_name']}'s {sq['name']}** ({ul}) "
+                    f"WARNING **{sq['owner_name']}'s {sq['name']}** ({ul}) "
                     f"critically low on supply (`{new_supply}`).")
 
-    # ── Post summary ──────────────────────────────────────────────────────────
+    # â”€â”€ Post summary â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     async def _post(self, guild_id, planet_name, turn_num, summaries, theme):
         guild = self.bot.get_guild(guild_id)

@@ -4,15 +4,17 @@ import discord
 DIVIDER = "━━━━━━━━━━━━━━━━━━"
 
 REVENANT_COLORS = {
-    "default": 0x34495E,
-    "info": 0x34495E,
-    "active": 0x2ECC71,
-    "success": 0x2ECC71,
-    "warning": 0xD6A536,
-    "danger": 0xC0392B,
-    "error": 0xC0392B,
-    "gm": 0x6C5CE7,
-    "admin": 0x6C5CE7,
+    "default": 0x1F2A33,
+    "info": 0x2D3A45,
+    "active": 0x7ED957,
+    "success": 0x7ED957,
+    "warning": 0xF5A623,
+    "danger": 0xE74C3C,
+    "error": 0xE74C3C,
+    "gm": 0x8B5CF6,
+    "admin": 0x52616B,
+    "deployment": 0x3498DB,
+    "intel": 0x8B5CF6,
 }
 
 
@@ -36,6 +38,41 @@ def format_section(title: str, lines: list[str]) -> str:
 
 def kv(label: str, value) -> str:
     return f"**{label}:** {value if value not in (None, '') else 'Unknown'}"
+
+
+def progress_bar(current: int, total: int, width: int = 12) -> str:
+    current = max(0, int(current or 0))
+    total = max(0, int(total or 0))
+    if total <= 0:
+        return "░" * width
+    filled = min(width, round((current / total) * width))
+    return "█" * filled + "░" * (width - filled)
+
+
+def dot_bar(count: int, maximum: int = 3) -> str:
+    count = max(0, int(count or 0))
+    maximum = max(1, int(maximum or 1))
+    shown = min(count, maximum)
+    suffix = f" +{count - maximum}" if count > maximum else ""
+    return " ".join(["●"] * shown + ["○"] * (maximum - shown)) + suffix
+
+
+def status_label(status: str) -> str:
+    raw = (status or "unknown").strip()
+    normalized = raw.lower()
+    if normalized in {"open", "active", "deployable", "success", "complete", "completed"}:
+        marker = "🟢"
+    elif normalized in {"pending", "locked", "paused", "standby"}:
+        marker = "🟡"
+    elif normalized in {"failed", "failure", "closed", "cancelled", "error"}:
+        marker = "🔴"
+    else:
+        marker = "🔵"
+    return f"{marker} {raw.upper()}"
+
+
+def transmission(text: str) -> str:
+    return f"🟢 **Transmission:** {text}"
 
 
 def build_revenant_embed(
